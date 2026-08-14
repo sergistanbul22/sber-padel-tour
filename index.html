@@ -5622,7 +5622,7 @@ function openCreateTrainingModal() {
     showToast("Только администратор может создавать тренировки", "error");
     return;
   }
-  document.getElementById('trainingDate').value = '';
+  document.getElementById('trainingDate').value = new Date().toISOString().split('T')[0];
   document.getElementById('trainingTimeStart').value = '';
   document.getElementById('trainingTimeEnd').value = '';
   document.getElementById('trainingLocation').value = '';
