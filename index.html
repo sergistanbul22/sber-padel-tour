@@ -218,10 +218,6 @@
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    /* iOS Safari fix: force compositing layer to prevent drift on scroll */
-    -webkit-transform: translateZ(0);
-    transform: translateZ(0);
-    will-change: transform;
   }
 
   .bottom-nav::-webkit-scrollbar {
@@ -1023,7 +1019,7 @@
     }
 
     .section {
-      padding: 30px 16px;
+      padding: 30px 16px 120px;
     }
 
     .section-title {
