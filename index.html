@@ -537,6 +537,7 @@
   /* Forms */
   .form-group {
     margin-bottom: 16px;
+    position: relative;
   }
 
   .form-label {
@@ -566,6 +567,49 @@
 
   .form-input::placeholder {
     color: var(--text-muted);
+  }
+
+  /* Game player search dropdown */
+  .game-player-search {
+    position: relative;
+  }
+  .game-player-dropdown {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .game-player-dropdown.show {
+    display: block;
+  }
+  .game-player-option {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--border);
+  }
+  .game-player-option:last-child {
+    border-bottom: none;
+  }
+  .game-player-option:hover {
+    background: var(--bg-hover);
+  }
+  .game-player-option.no-results {
+    color: var(--text-muted);
+    cursor: default;
+  }
+  .game-player-option.no-results:hover {
+    background: transparent;
   }
 
   input[type="date"].form-input {
@@ -1434,7 +1478,7 @@
 <!-- Trainings Section -->
 <section class="section" id="section-trainings">
   <h2 class="section-title">💪 Тренировки</h2>
-  <p class="section-subtitle">Запись на тренировки SBER PADEL TOUR</p>
+  <p class="section-subtitle">Проверьте заполненность контактных данных в Профиле, чтобы Организатор тренировки имел возможность с вами связаться</p>
 
   <div style="text-align: center; margin-bottom: 24px; display: none;" id="createTrainingBtnWrapper">
     <button class="btn btn-primary" onclick="openCreateTrainingModal()">
@@ -1700,22 +1744,30 @@
         <div style="font-weight: 600; margin-bottom: 12px; color: var(--accent);">Пара 1</div>
         <div class="form-group">
           <label class="form-label">Игрок 1</label>
-          <select class="form-select" id="gamePair1Player1"><option value="">Выберите игрока</option></select>
+          <input type="text" class="form-input game-player-search" id="gamePair1Player1Name" placeholder="🔍 Поиск игрока..." oninput="onGamePlayerSearch('gamePair1Player1')" onfocus="onGamePlayerSearch('gamePair1Player1')">
+          <input type="hidden" id="gamePair1Player1">
+          <div class="game-player-dropdown" id="gamePair1Player1Dropdown"></div>
         </div>
         <div class="form-group">
           <label class="form-label">Игрок 2</label>
-          <select class="form-select" id="gamePair1Player2"><option value="">Выберите игрока</option></select>
+          <input type="text" class="form-input game-player-search" id="gamePair1Player2Name" placeholder="🔍 Поиск игрока..." oninput="onGamePlayerSearch('gamePair1Player2')" onfocus="onGamePlayerSearch('gamePair1Player2')">
+          <input type="hidden" id="gamePair1Player2">
+          <div class="game-player-dropdown" id="gamePair1Player2Dropdown"></div>
         </div>
       </div>
       <div style="margin-bottom: 16px;">
         <div style="font-weight: 600; margin-bottom: 12px; color: var(--accent);">Пара 2</div>
         <div class="form-group">
           <label class="form-label">Игрок 1</label>
-          <select class="form-select" id="gamePair2Player1"><option value="">Выберите игрока</option></select>
+          <input type="text" class="form-input game-player-search" id="gamePair2Player1Name" placeholder="🔍 Поиск игрока..." oninput="onGamePlayerSearch('gamePair2Player1')" onfocus="onGamePlayerSearch('gamePair2Player1')">
+          <input type="hidden" id="gamePair2Player1">
+          <div class="game-player-dropdown" id="gamePair2Player1Dropdown"></div>
         </div>
         <div class="form-group">
           <label class="form-label">Игрок 2</label>
-          <select class="form-select" id="gamePair2Player2"><option value="">Выберите игрока</option></select>
+          <input type="text" class="form-input game-player-search" id="gamePair2Player2Name" placeholder="🔍 Поиск игрока..." oninput="onGamePlayerSearch('gamePair2Player2')" onfocus="onGamePlayerSearch('gamePair2Player2')">
+          <input type="hidden" id="gamePair2Player2">
+          <div class="game-player-dropdown" id="gamePair2Player2Dropdown"></div>
         </div>
       </div>
       <div style="display: flex; gap: 8px;">
@@ -2557,6 +2609,7 @@ async function renderProfile() {
     const login = userData.login || userEmail.split('@')[0];
     const gender = userData.gender || '';
     const email = userData.recoveryEmail || '';
+    const telegram = userData.telegram || '';
 
     // Get linked player data
     let playerData = null;
@@ -2615,6 +2668,10 @@ async function renderProfile() {
           <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Email</label>
           <input type="email" class="form-input" id="profileEmail" value="${escapeHtml(email)}" placeholder="your@email.com" style="width:100%;">
         </div>
+        <div style="padding:8px 0;">
+          <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Telegram</label>
+          <input type="text" class="form-input" id="profileTelegram" value="${escapeHtml(telegram)}" placeholder="@username" style="width:100%;">
+        </div>
         <button class="btn btn-primary" style="width:100%; margin-top:8px;" onclick="saveProfile()">💾 Сохранить изменения</button>
       </div>
     `;
@@ -2632,6 +2689,8 @@ async function saveProfile() {
   const lastName = document.getElementById('profileLastName').value.trim();
   const gender = document.getElementById('profileGender').value;
   const email = document.getElementById('profileEmail').value.trim();
+  let telegram = document.getElementById('profileTelegram').value.trim();
+  if (telegram && !telegram.startsWith('@')) telegram = '@' + telegram;
 
   if (!firstName || !lastName) {
     showToast("Имя и фамилия обязательны", "error");
@@ -2645,18 +2704,19 @@ async function saveProfile() {
     };
     if (gender) updateData.gender = gender;
     if (email) updateData.recoveryEmail = email;
+    if (telegram) updateData.telegram = telegram;
 
     await db.collection("users").doc(userEmail).update(updateData);
 
-    // Обновляем имя игрока в padel_players
+    // Обновляем имя и telegram игрока в padel_players
     const userDoc = await db.collection("users").doc(userEmail).get();
     if (userDoc.exists) {
       const userData = userDoc.data();
       if (userData.playerId) {
         const playerName = lastName + " " + firstName;
-        await db.collection("padel_players").doc(userData.playerId).update({
-          name: playerName
-        });
+        const ppUpdate = { name: playerName };
+        if (telegram) ppUpdate.telegram = telegram;
+        await db.collection("padel_players").doc(userData.playerId).update(ppUpdate);
         // Обновляем кэш
         await loadPlayers();
       }
@@ -5205,15 +5265,14 @@ function openCreateGameModal() {
     return;
   }
 
-  // Заполняем селекты игроков (сортировка по алфавиту А-Я)
-  const sortedPlayers = [...players].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru-RU'));
-  const selects = ['gamePair1Player1', 'gamePair1Player2', 'gamePair2Player1', 'gamePair2Player2'];
-  selects.forEach(id => {
-    const sel = document.getElementById(id);
-    if (sel) {
-      sel.innerHTML = '<option value="">Выберите игрока</option>' +
-        sortedPlayers.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
-    }
+  // Очищаем поля поиска игроков
+  const fields = ['gamePair1Player1', 'gamePair1Player2', 'gamePair2Player1', 'gamePair2Player2'];
+  fields.forEach(id => {
+    const nameInput = document.getElementById(id + 'Name');
+    const hiddenInput = document.getElementById(id);
+    if (nameInput) nameInput.value = '';
+    if (hiddenInput) hiddenInput.value = '';
+    hideGamePlayerDropdown(id);
   });
 
   // Устанавливаем сегодняшнюю дату
@@ -5264,6 +5323,63 @@ async function createGame() {
     showToast("Ошибка: " + e.message, "error");
   }
 }
+
+// ===== Game Player Search =====
+function onGamePlayerSearch(fieldId) {
+  const nameInput = document.getElementById(fieldId + 'Name');
+  const dropdown = document.getElementById(fieldId + 'Dropdown');
+  const query = (nameInput?.value || '').trim().toLowerCase();
+
+  // Скрыть все другие dropdown'ы
+  ['gamePair1Player1', 'gamePair1Player2', 'gamePair2Player1', 'gamePair2Player2'].forEach(id => {
+    if (id !== fieldId) hideGamePlayerDropdown(id);
+  });
+
+  if (players.length === 0) {
+    dropdown.innerHTML = '<div class="game-player-option no-results">Нет игроков</div>';
+    dropdown.classList.add('show');
+    return;
+  }
+
+  const sorted = [...players].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'));
+  const filtered = query ? sorted.filter(p => (p.name || '').toLowerCase().includes(query)) : sorted;
+
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div class="game-player-option no-results">Нет совпадений</div>';
+  } else {
+    dropdown.innerHTML = filtered.map(p =>
+      `<div class="game-player-option" onclick="selectGamePlayer('${fieldId}', '${p.id}', '${escapeHtml(p.name)}')">${escapeHtml(p.name)}</div>`
+    ).join('');
+  }
+  dropdown.classList.add('show');
+}
+
+function selectGamePlayer(fieldId, playerId, playerName) {
+  document.getElementById(fieldId).value = playerId;
+  document.getElementById(fieldId + 'Name').value = playerName;
+  hideGamePlayerDropdown(fieldId);
+}
+
+function hideGamePlayerDropdown(fieldId) {
+  const dropdown = document.getElementById(fieldId + 'Dropdown');
+  if (dropdown) dropdown.classList.remove('show');
+}
+
+// Скрыть dropdown при клике вне
+(function setupGamePlayerClickOutside() {
+  if (window._gamePlayerClickOutsideSetup) return;
+  window._gamePlayerClickOutsideSetup = true;
+  document.addEventListener('click', function(e) {
+    const fields = ['gamePair1Player1', 'gamePair1Player2', 'gamePair2Player1', 'gamePair2Player2'];
+    fields.forEach(id => {
+      const nameInput = document.getElementById(id + 'Name');
+      const dropdown = document.getElementById(id + 'Dropdown');
+      if (nameInput && dropdown && !nameInput.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.classList.remove('show');
+      }
+    });
+  });
+})();
 
 function openGame(gameId) {
   gameScoreSelections = { score1: null, score2: null };
@@ -5936,14 +6052,18 @@ function openTraining(trainingId) {
   const isPast = endDateTime < new Date();
 
   let slotsHtml = '';
+  const isOrganizerOrAdmin = isAdmin || (t.createdBy && (t.createdBy === userEmail));
   if (t.slots && t.slots.length > 0) {
     t.slots.forEach((slot, idx) => {
+      const infoBtn = (isOrganizerOrAdmin && slot.playerId)
+        ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${slot.playerId}', '${escapeHtml(slot.playerName || '')}')" title="Контактные данные">ℹ️</span>`
+        : '';
       if (isAdmin) {
         // Admin: editable selects with trash button
         const currentPlayer = players.find(p => p.id === slot.playerId);
         const currentValue = slot.playerId || '';
         slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-          <span>Слот ${idx + 1}</span>
+          <span>Слот ${idx + 1}${infoBtn}</span>
           <div style="display: flex; align-items: center; gap: 8px;">
             <select class="form-select" style="max-width: 200px;" onchange="changeTrainingPlayer('${trainingId}', ${idx}, this.value)">
               <option value="">Свободно</option>
@@ -5955,7 +6075,7 @@ function openTraining(trainingId) {
         </div>`;
       } else if (slot.playerId) {
         slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}</span>
+          <span>Слот ${idx + 1}${infoBtn}</span>
           <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
         </div>`;
       } else {
@@ -5969,7 +6089,6 @@ function openTraining(trainingId) {
 
   const isClosed = t.trainingType === 'closed';
   const applications = t.applications || [];
-  const isOrganizerOrAdmin = isAdmin || (t.createdBy && (t.createdBy === userEmail));
   const alreadyApplied = applications.some(a => a.playerId === userEmail || a.playerId === currentUserData?.playerId);
 
   // Applications section for closed training
@@ -6083,6 +6202,46 @@ function openTraining(trainingId) {
   document.getElementById('modalContent').innerHTML = content;
   modalEl.classList.add('open');
   console.log('[DEEP-LINK] Modal opened successfully');
+}
+
+function showSlotPlayerInfo(playerId, playerName) {
+  // Удаляем старый popup если есть
+  const oldPopup = document.getElementById('slotPlayerInfoPopup');
+  const oldOverlay = document.getElementById('slotPlayerInfoOverlay');
+  if (oldPopup) oldPopup.remove();
+  if (oldOverlay) oldOverlay.remove();
+
+  const p = players.find(x => x.id === playerId);
+  const rating = p && p.rating ? p.rating : '—';
+  let telegram = p && p.telegram ? p.telegram : '';
+  if (telegram && !telegram.startsWith('@')) telegram = '@' + telegram;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'slotPlayerInfoOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;';
+
+  const popup = document.createElement('div');
+  popup.id = 'slotPlayerInfoPopup';
+  popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;z-index:10000;max-width:300px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+
+  const telegramHtml = telegram
+    ? `<div style="margin-bottom:16px;">✈️ Telegram: <a href="https://t.me/${telegram.replace('@','')}" target="_blank" style="color:var(--accent);font-weight:600;">${escapeHtml(telegram)}</a></div>`
+    : `<div style="margin-bottom:16px;color:var(--text-muted);">✈️ Telegram: не указан</div>`;
+
+  popup.innerHTML = `
+    <div style="font-weight:600;margin-bottom:12px;font-size:16px;">👤 ${escapeHtml(playerName)}</div>
+    <div style="margin-bottom:8px;">📊 Рейтинг: <b>${rating}</b></div>
+    ${telegramHtml}
+    <button class="btn btn-primary" style="width:100%;" onclick="document.getElementById('slotPlayerInfoPopup').remove();document.getElementById('slotPlayerInfoOverlay').remove();">Закрыть</button>
+  `;
+
+  overlay.onclick = () => {
+    popup.remove();
+    overlay.remove();
+  };
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(popup);
 }
 
 async function changeTrainingPlayer(trainingId, slotIndex, newPlayerId) {
