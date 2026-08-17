@@ -1653,7 +1653,7 @@
         <input type="password" class="form-input" id="regConfirmPassword" placeholder="••••••••">
       </div>
       <div id="registerDuplicateWarning" style="display: none;"></div>
-      <button class="btn btn-primary" style="width:100%; margin-bottom: 12px;" onclick="registerUser()">Зарегистрироваться</button>
+      <button class="btn btn-primary" id="registerBtn" style="width:100%; margin-bottom: 12px;" onclick="registerUser()">Зарегистрироваться</button>
       <button class="btn btn-secondary" style="width:100%;" onclick="openLoginModal()">Уже есть аккаунт? Войти</button>
     </div>
   </div>
@@ -2342,6 +2342,9 @@ function signInWithEmail() {
 }
 
 async function registerUser() {
+  const btn = document.getElementById('registerBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Регистрация...'; }
+
   const firstName = document.getElementById('regFirstName').value.trim();
   const lastName = document.getElementById('regLastName').value.trim();
   const login = document.getElementById('regLogin').value.trim();
@@ -2357,16 +2360,19 @@ async function registerUser() {
 
   if (!firstName || !lastName || !login || !password) {
     showToast("Заполните обязательные поля", "error");
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
     return;
   }
 
   if (password !== confirmPassword) {
     showToast("Пароли не совпадают", "error");
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
     return;
   }
 
   if (password.length < 6) {
     showToast("Пароль должен быть не менее 6 символов", "error");
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
     return;
   }
 
@@ -2398,6 +2404,7 @@ async function registerUser() {
       `;
       warningEl.style.display = 'block';
       showToast("Пользователь с таким именем уже существует", "error");
+      if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
       return;
     }
   } catch (checkErr) {
@@ -2457,6 +2464,8 @@ async function registerUser() {
   } catch (err) {
     showToast("Ошибка регистрации: " + err.message, "error");
     try { await auth.signOut(); } catch (e) {}
+    const btn = document.getElementById('registerBtn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
   }
 }
 
@@ -6335,6 +6344,12 @@ async function bookTrainingSlot(trainingId) {
 
   const t = trainings.find(x => x.id === trainingId);
   if (!t || !t.slots) return;
+
+  // Block direct booking on closed trainings
+  if (t.trainingType === 'closed') {
+    showToast("Это закрытая тренировка. Подайте заявку на участие", "error");
+    return;
+  }
 
   const freeSlotIndex = t.slots.findIndex(s => !s.playerId);
   if (freeSlotIndex === -1) {
