@@ -1668,13 +1668,14 @@
     </div>
     <div style="padding: 20px;">
       <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
-        Введите email, указанный при регистрации. Мы отправим ссылку для сброса пароля.
+        Введите email для восстановления, указанный в вашем профиле. Мы проверим его наличие в системе и отправим запрос администратору.
       </p>
       <div class="form-group">
-        <label class="form-label">Email</label>
-        <input type="email" class="form-input" id="forgotEmail" placeholder="your@email.com">
+        <label class="form-label">Email для восстановления</label>
+        <input type="email" class="form-input" id="forgotRecoveryEmail" placeholder="your@email.com">
       </div>
-      <button class="btn btn-primary" style="width:100%; margin-bottom: 12px;" onclick="sendPasswordReset()">Отправить ссылку</button>
+      <div id="forgotResult" style="display:none; margin-bottom: 12px;"></div>
+      <button class="btn btn-primary" id="forgotBtn" style="width:100%; margin-bottom: 12px;" onclick="sendPasswordReset()">Сбросить пароль</button>
       <button class="btn btn-secondary" style="width:100%;" onclick="closeForgotPasswordModal(); openLoginModal();">Назад к входу</button>
     </div>
   </div>
@@ -2348,7 +2349,7 @@ async function registerUser() {
   const firstName = document.getElementById('regFirstName').value.trim();
   const lastName = document.getElementById('regLastName').value.trim();
   const login = document.getElementById('regLogin').value.trim();
-  const recoveryEmail = document.getElementById('regEmail').value.trim();
+  const recoveryEmail = document.getElementById('regEmail').value.trim().toLowerCase();
   const gender = document.getElementById('regGender').value;
   const password = document.getElementById('regPassword').value;
   const confirmPassword = document.getElementById('regConfirmPassword').value;
@@ -2763,18 +2764,59 @@ function closeChangePasswordModal() {
 }
 
 async function sendPasswordReset() {
-  const email = document.getElementById('forgotEmail').value.trim();
-  if (!email) {
-    showToast("Введите email", "error");
+  const recoveryEmail = document.getElementById('forgotRecoveryEmail').value.trim().toLowerCase();
+  const resultEl = document.getElementById('forgotResult');
+  const btn = document.getElementById('forgotBtn');
+  if (!recoveryEmail) {
+    showToast("Введите email для восстановления", "error");
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Отправка...'; }
+
+  // Simple email format validation
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(recoveryEmail)) {
+    resultEl.innerHTML = '<div style="color:var(--danger); font-size:13px;">❌ Введите корректный email.</div>';
+    resultEl.style.display = 'block';
+    if (btn) { btn.disabled = false; btn.textContent = 'Сбросить пароль'; }
     return;
   }
 
   try {
-    await auth.sendPasswordResetEmail(email);
-    showToast("Ссылка для сброса пароля отправлена на " + email, "success");
-    closeForgotPasswordModal();
+    const response = await fetch('https://ties-canal-citizens-herb.trycloudflare.com/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recoveryEmail: recoveryEmail })
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      resultEl.innerHTML = `
+        <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
+          <div style="color:var(--success); margin-bottom:8px;">✅ Запрос принят</div>
+          <div>${escapeHtml(data.message)}</div>
+        </div>
+      `;
+    } else {
+      resultEl.innerHTML = `
+        <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
+          <div style="color:var(--danger); margin-bottom:8px;">❌ ${escapeHtml(data.error || 'Ошибка')}</div>
+        </div>
+      `;
+    }
+    resultEl.style.display = 'block';
   } catch (err) {
-    showToast("Ошибка: " + err.message, "error");
+    resultEl.innerHTML = `
+      <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
+        <div style="color:var(--danger); margin-bottom:8px;">❌ Не удалось отправить запрос</div>
+        <div style="font-size:12px;">Обратитесь к администратору в Telegram @ustyugovs</div>
+      </div>
+    `;
+    resultEl.style.display = 'block';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Сбросить пароль'; }
   }
 }
 
