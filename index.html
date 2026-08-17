@@ -6056,12 +6056,13 @@ function openTraining(trainingId) {
 
   let slotsHtml = '';
   const isOrganizerOrAdmin = isAdmin || (t.createdBy && (t.createdBy === userEmail));
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
   if (t.slots && t.slots.length > 0) {
     t.slots.forEach((slot, idx) => {
       const infoBtn = (isOrganizerOrAdmin && slot.playerId)
         ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${slot.playerId}', '${escapeHtml(slot.playerName || '')}')" title="Контактные данные">ℹ️</span>`
         : '';
-      if (isAdmin) {
+      if (isSuperAdmin || isOrganizer) {
         // Admin: editable selects with trash button
         const currentPlayer = players.find(p => p.id === slot.playerId);
         const currentValue = slot.playerId || '';
@@ -6248,13 +6249,15 @@ function showSlotPlayerInfo(playerId, playerName) {
 }
 
 async function changeTrainingPlayer(trainingId, slotIndex, newPlayerId) {
-  if (!isAdmin) {
-    showToast("Только администратор может редактировать записи", "error");
-    return;
-  }
-
   const t = trainings.find(x => x.id === trainingId);
   if (!t || !t.slots || slotIndex < 0 || slotIndex >= t.slots.length) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  if (!isSuperAdmin && !isOrganizer) {
+    showToast("Только организатор или супер-админ может редактировать записи", "error");
+    return;
+  }
 
   try {
     const updatedSlots = [...t.slots];
