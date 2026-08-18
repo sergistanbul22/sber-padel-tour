@@ -1130,6 +1130,26 @@
       white-space: nowrap;
     }
 
+    /* Admin tables mobile - single row, scrollable */
+    #adminUsersTable th,
+    #adminUsersTable td,
+    #allUsersTable th,
+    #allUsersTable td {
+      white-space: nowrap;
+      padding: 8px 6px;
+      font-size: 12px;
+    }
+
+    #adminUsersTable th:nth-child(3),
+    #adminUsersTable td:nth-child(3),
+    #allUsersTable th:nth-child(3),
+    #allUsersTable td:nth-child(3) {
+      font-size: 11px;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .stats-grid {
       grid-template-columns: repeat(3, 1fr);
       gap: 12px;
