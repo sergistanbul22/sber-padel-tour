@@ -451,6 +451,11 @@
     min-width: 700px;
   }
 
+  #adminUsersTable,
+  #allUsersTable {
+    min-width: 800px;
+  }
+
   .data-table th {
     text-align: left;
     padding: 14px 16px;
@@ -5006,7 +5011,7 @@ function renderUsers() {
     return nameA.localeCompare(nameB);
   });
 
-  let html = '<table class="data-table"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<div class="table-scroll"><table class="data-table" id="adminUsersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   sortedAdmins.forEach(a => {
     // Determine role display
     const role = a.role || (a.isApproved ? 'admin' : 'player');
@@ -5023,7 +5028,8 @@ function renderUsers() {
     html += `<tr>
       <td>${escapeHtml(a.lastName || '')} ${escapeHtml(a.firstName || '')}</td>
       <td>${escapeHtml(a.login || '')}</td>
-      <td>${escapeHtml(a.id)}</td>
+      <td>${escapeHtml(a.recoveryEmail || '—')}</td>
+      <td>${escapeHtml(a.telegram || '—')}</td>
       <td>${roleBadge}</td>
       <td style="text-align: right;">`;
 
@@ -5042,7 +5048,7 @@ function renderUsers() {
 
     html += `</td></tr>`;
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   container.innerHTML = html;
 }
 
@@ -5105,7 +5111,7 @@ function renderAllUsers() {
     return;
   }
 
-  let html = '<table class="data-table"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<div class="table-scroll"><table class="data-table" id="allUsersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   admins.forEach(a => {
     const role = a.role || (a.isApproved ? 'admin' : 'player');
     let roleBadge = '';
@@ -5121,7 +5127,8 @@ function renderAllUsers() {
     html += `<tr>
       <td>${escapeHtml(a.lastName || '')} ${escapeHtml(a.firstName || '')}</td>
       <td>${escapeHtml(a.login || '')}</td>
-      <td>${escapeHtml(a.id)}</td>
+      <td>${escapeHtml(a.recoveryEmail || '—')}</td>
+      <td>${escapeHtml(a.telegram || '—')}</td>
       <td>${roleBadge}</td>
       <td style="text-align: right;">`;
 
@@ -5139,7 +5146,7 @@ function renderAllUsers() {
 
     html += `</td></tr>`;
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   container.innerHTML = html;
 }
 
