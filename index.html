@@ -3679,11 +3679,11 @@ async function createTournament() {
     closeCreateTournamentModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    _submitting.createTournament = false;
+    btn.disabled = false;
+    btn.innerHTML = '🏆 Создать турнир';
   }
-}
-
-  btn.disabled = false;
-  btn.innerHTML = '🏆 Создать турнир';
 }
 
 // ============================================
