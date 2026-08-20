@@ -51,6 +51,38 @@
     overflow-x: hidden;
   }
 
+  /* Pull to Refresh */
+  .ptr-indicator {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    transform: translateY(-100%);
+  }
+  .ptr-indicator.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .ptr-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: ptr-spin 0.8s linear infinite;
+  }
+  @keyframes ptr-spin {
+    to { transform: rotate(360deg); }
+  }
+
   /* Header */
   .header {
     background: rgba(10,10,10,0.95);
@@ -1358,6 +1390,11 @@
 </head>
 <body>
 
+<!-- Pull to Refresh Indicator -->
+<div class="ptr-indicator" id="ptrIndicator">
+  <div class="ptr-spinner"></div>
+</div>
+
 <!-- Header -->
 <header class="header">
   <div class="header-inner">
@@ -1944,7 +1981,6 @@ let games = [];
 let totalPlayers = 0;
 let totalTournaments = 0;
 let totalGames = 0;
-let allGames = []; // все игры для подсчёта статистики (без лимита)
 let _gamesLastDoc = null;
 let _hasMoreGames = true;
 const GAMES_PAGE_SIZE = 20;
@@ -2020,8 +2056,7 @@ function init() {
     fetchGames();
     
     // Fetch total counts for accurate stats (not limited by pagination)
-    fetchTotalCounts();
-    fetchAllGamesForStats();
+    fetchCounters();
 
     // Trainings: load only if deep-link or user opens trainings section
     const params = new URLSearchParams(window.location.search);
@@ -2046,6 +2081,9 @@ function init() {
 
     // iOS install banner
     checkIosInstallBanner();
+
+    // Pull to Refresh setup
+    setupPullToRefresh();
   } catch (e) {
     console.error("Firebase init error:", e);
     showToast("Ошибка инициализации Firebase. Проверьте конфигурацию.", "error");
@@ -2081,41 +2119,18 @@ function canEdit(item) {
   return creatorEmail === userEmail;
 }
 
-function fetchTotalCounts() {
-  // Общее количество игроков
-  db.collection("padel_players").count().get()
-    .then(snapshot => {
-      totalPlayers = snapshot.data().count;
-      updateStats();
+function fetchCounters() {
+  db.collection("settings").doc("counters").get()
+    .then(doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        totalPlayers = data.totalPlayers || 0;
+        totalTournaments = data.totalTournaments || 0;
+        totalGames = data.totalGames || 0;
+        updateStats();
+      }
     })
-    .catch(err => console.error("Players count error:", err));
-
-  // Общее количество турниров
-  db.collection("padel_tournaments").count().get()
-    .then(snapshot => {
-      totalTournaments = snapshot.data().count;
-      updateStats();
-    })
-    .catch(err => console.error("Tournaments count error:", err));
-
-  // Общее количество завершённых отдельных игр (не из турниров)
-  db.collection("padel_games").where("status", "==", "finished").count().get()
-    .then(snapshot => {
-      totalGames = snapshot.data().count;
-      updateStats();
-    })
-    .catch(err => console.error("Games count error:", err));
-}
-
-function fetchAllGamesForStats() {
-  // Загружаем ВСЕ игры только для подсчёта статистики (не для отображения)
-  db.collection("padel_games").orderBy("createdAt", "desc").get()
-    .then(snapshot => {
-      allGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      renderPlayers();
-      updateStats();
-    })
-    .catch(err => console.error("All games for stats error:", err));
+    .catch(err => console.error("Counters fetch error:", err));
 }
 
 function fetchPlayers() {
@@ -2710,7 +2725,7 @@ function showSection(section) {
     renderProfile();
   }
   if (section === 'trainings') {
-    if (trainings.length === 0) fetchTrainings();
+    fetchTrainings();
     if (trainingLocations.length === 0) fetchTrainingMeta();
     renderTrainings();
   }
@@ -3020,21 +3035,6 @@ async function recalcTournamentCounts() {
   }
 }
 
-async function recalcPlayerGames() {
-  // Count finished games (not tied to tournaments) for each player
-  const gamesToCount = allGames.length > 0 ? allGames : games;
-  const gameCounts = {};
-  gamesToCount.forEach(g => {
-    if (g.status === 'finished' && !g.tournamentId) {
-      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
-      allPlayerIds.forEach(pid => {
-        gameCounts[pid] = (gameCounts[pid] || 0) + 1;
-      });
-    }
-  });
-  return gameCounts;
-}
-
 function renderPlayers() {
   const container = document.getElementById('playersList');
 
@@ -3049,35 +3049,12 @@ function renderPlayers() {
     return;
   }
 
-  // Count finished standalone games for each player dynamically
-  // Используем allGames (все игры без лимита) если доступны, иначе games
-  const gamesToCount = allGames.length > 0 ? allGames : games;
-  const gamesCount = {};
-  gamesToCount.forEach(g => {
-    if (g.status === 'finished' && !g.tournamentId) {
-      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
-      allPlayerIds.forEach(pid => {
-        gamesCount[pid] = (gamesCount[pid] || 0) + 1;
-      });
-    }
-  });
-
-  // Count finished tournament participations dynamically (fallback for data consistency)
-  const tournamentCountFinished = {};
-  tournaments.forEach(t => {
-    if (t.status === 'finished' && t.playerIds) {
-      t.playerIds.forEach(pid => {
-        tournamentCountFinished[pid] = (tournamentCountFinished[pid] || 0) + 1;
-      });
-    }
-  });
-
   // Sort: players with matches/tournaments first (by rating desc), then players without any games (at bottom)
   const sorted = [...players].sort((a, b) => {
-    const aGames = (a.tournamentsPlayed || 0) + (gamesCount[a.id] || 0);
-    const bGames = (b.tournamentsPlayed || 0) + (gamesCount[b.id] || 0);
-    const aHasGames = aGames > 0 || (tournamentCountFinished[a.id] || 0) > 0;
-    const bHasGames = bGames > 0 || (tournamentCountFinished[b.id] || 0) > 0;
+    const aGames = (a.tournamentsPlayed || 0) + (a.gamesPlayed || 0);
+    const bGames = (b.tournamentsPlayed || 0) + (b.gamesPlayed || 0);
+    const aHasGames = aGames > 0 || (a.tournamentCount || 0) > 0;
+    const bHasGames = bGames > 0 || (b.tournamentCount || 0) > 0;
     // Players without games go to the bottom
     if (aHasGames && !bHasGames) return -1;
     if (!aHasGames && bHasGames) return 1;
@@ -3103,9 +3080,8 @@ function renderPlayers() {
     const medals = p.medals || { gold: 0, silver: 0, bronze: 0 };
     const medalStr = '🥇'.repeat(medals.gold) + '🥈'.repeat(medals.silver) + '🥉'.repeat(medals.bronze);
     const rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-other';
-    const finishedTournaments = tournamentCountFinished[p.id] || 0;
-    const hasGames = ((p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0)) > 0 || finishedTournaments > 0;
-    const totalGames = (p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0);
+    const hasGames = ((p.tournamentsPlayed || 0) + (p.gamesPlayed || 0)) > 0 || (p.tournamentCount || 0) > 0;
+    const totalGames = (p.tournamentsPlayed || 0) + (p.gamesPlayed || 0);
     const ratingVal = hasGames ? (p.rating || 100) : '-';
     const isNewbie = totalGames <= 5 && hasGames;
 
@@ -3115,7 +3091,7 @@ function renderPlayers() {
       <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${p.rating || 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
       <td><div class="medals">${medalStr || '<span style="color:var(--text-muted)">-</span>'}</div></td>
       <td>${p.tournamentCount || 0}</td>
-      <td>${gamesCount[p.id] || 0}</td>
+      <td>${p.gamesPlayed || 0}</td>
       <td>${isSuperAdmin ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deletePlayer('${p.id}')">🗑️</button>` : ''}</td>
     </tr>`;
   });
@@ -3140,8 +3116,11 @@ async function addNewPlayer() {
       tournamentCount: 0,
       rating: 100,
       tournamentsPlayed: 0,
+      gamesPlayed: 0,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    await updateCounter('totalPlayers', 1);
 
     showToast(`Игрок "${name}" добавлен`, "success");
     input.value = '';
@@ -3161,6 +3140,7 @@ async function deletePlayer(playerId) {
   if (!confirm('Удалить игрока? Это действие нельзя отменить.')) return;
   try {
     await db.collection("padel_players").doc(playerId).delete();
+    await updateCounter('totalPlayers', -1);
     showToast("Игрок удален", "success");
     await loadPlayers();
     renderPlayerSelect();
@@ -3755,6 +3735,7 @@ async function createTournament() {
     }
 
     const docRef = await db.collection("padel_tournaments").add(docData);
+    await updateCounter('totalTournaments', 1);
 
     // Update player tournament counts (only if admin - skip for regular users)
     try {
@@ -4730,6 +4711,7 @@ async function deleteTournament(tournamentId) {
     }
 
     // Now delete tournament
+    await updateCounter('totalTournaments', -1);
     await db.collection("padel_tournaments").doc(tournamentId).delete();
 
     showToast("Турнир удален", "success");
@@ -5283,9 +5265,9 @@ function renderAllUsers() {
 // STATS
 // ============================================
 function updateStats() {
-  document.getElementById('statPlayers').textContent = totalPlayers || players.length;
-  document.getElementById('statTournaments').textContent = totalTournaments || tournaments.length;
-  document.getElementById('statMatches').textContent = totalGames || games.filter(g => g.status === 'finished' && !g.tournamentId).length;
+  document.getElementById('statPlayers').textContent = totalPlayers;
+  document.getElementById('statTournaments').textContent = totalTournaments;
+  document.getElementById('statMatches').textContent = totalGames;
 }
 
 // ============================================
@@ -5530,6 +5512,16 @@ function closeCreateGameModal() {
   document.getElementById('createGameModal').classList.remove('show');
 }
 
+async function updateCounter(field, delta) {
+  try {
+    await db.collection("settings").doc("counters").set({
+      [field]: firebase.firestore.FieldValue.increment(delta)
+    }, { merge: true });
+  } catch (e) {
+    console.error("Counter update error:", e);
+  }
+}
+
 async function createGame() {
   const date = document.getElementById('gameDate').value;
   const p11 = document.getElementById('gamePair1Player1').value;
@@ -5559,6 +5551,18 @@ async function createGame() {
       createdByName: getCreatorName(user),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    // Increment gamesPlayed for each player and total games counter
+    const batch = db.batch();
+    [p11, p12, p21, p22].forEach(pid => {
+      batch.update(db.collection("padel_players").doc(pid), {
+        gamesPlayed: firebase.firestore.FieldValue.increment(1)
+      });
+    });
+    batch.update(db.collection("settings").doc("counters"), {
+      totalGames: firebase.firestore.FieldValue.increment(1)
+    });
+    await batch.commit();
 
     closeCreateGameModal();
     showToast("Игра создана", "success");
@@ -5968,6 +5972,21 @@ async function deleteGame(gameId) {
       await batch.commit();
     }
 
+    // Decrement gamesPlayed for each player and total games counter
+    if (g && !g.tournamentId) {
+      const decBatch = db.batch();
+      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
+      allPlayerIds.forEach(pid => {
+        decBatch.update(db.collection("padel_players").doc(pid), {
+          gamesPlayed: firebase.firestore.FieldValue.increment(-1)
+        });
+      });
+      decBatch.update(db.collection("settings").doc("counters"), {
+        totalGames: firebase.firestore.FieldValue.increment(-1)
+      });
+      await decBatch.commit();
+    }
+
     await db.collection("padel_games").doc(gameId).delete();
     showToast("Игра удалена", "success");
   } catch (e) {
@@ -6252,6 +6271,9 @@ function renderTrainings() {
     const endDateTime = new Date((t.date || '') + 'T' + (t.timeEnd || '23:59'));
     const isPast = endDateTime < now;
 
+    const applicationsCount = t.applications ? t.applications.length : 0;
+    const hasPendingApps = t.trainingType === 'closed' && applicationsCount > 0;
+
     html += `
       <div class="card" style="position: relative; padding: 16px;${isPast ? ' opacity: 0.55;' : ''}">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -6260,6 +6282,7 @@ function renderTrainings() {
               <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
                 ${isPast ? '✓ ' : ''}📅 ${dateStr}${isPast ? ' <span style="font-size:12px;color:var(--text-muted);">(завершена)</span>' : ''}
               </span>
+              ${hasPendingApps ? `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(255,149,0,0.15); color: var(--warning);">📝 ${applicationsCount} заявок</span>` : ''}
             </div>
             <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
               📍 ${escapeHtml(t.location)}${t.coach ? ' | 🎾 ' + escapeHtml(t.coach) : ''}${t.group ? ' | 👥 ' + escapeHtml(t.group) : ''}
@@ -6785,6 +6808,52 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ============================================
+// PULL TO REFRESH
+// ============================================
+function setupPullToRefresh() {
+  let startY = 0;
+  let isPulling = false;
+  const indicator = document.getElementById('ptrIndicator');
+  const threshold = 80; // pixels to trigger refresh
+
+  document.addEventListener('touchstart', function(e) {
+    if (window.scrollY === 0) {
+      startY = e.touches[0].clientY;
+      isPulling = true;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (!isPulling) return;
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - startY;
+
+    if (diff > 0 && window.scrollY === 0) {
+      indicator.classList.add('visible');
+      if (diff > threshold) {
+        indicator.style.opacity = '1';
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (!isPulling) return;
+    const currentY = e.changedTouches[0].clientY;
+    const diff = currentY - startY;
+
+    indicator.classList.remove('visible');
+    isPulling = false;
+
+    if (diff > threshold && window.scrollY === 0) {
+      showToast('Обновление...', 'info');
+      setTimeout(() => {
+        window.location.reload();
+      }, 300);
+    }
+  }, { passive: true });
 }
 
 // ============================================
