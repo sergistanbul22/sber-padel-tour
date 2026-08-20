@@ -1941,6 +1941,10 @@ let authReady = false; // true after first onAuthStateChanged callback
 let players = [];
 let tournaments = [];
 let games = [];
+let totalPlayers = 0;
+let totalTournaments = 0;
+let totalGames = 0;
+let allGames = []; // все игры для подсчёта статистики (без лимита)
 let _gamesLastDoc = null;
 let _hasMoreGames = true;
 const GAMES_PAGE_SIZE = 20;
@@ -2014,6 +2018,10 @@ function init() {
     fetchPlayers();
     fetchTournaments();
     fetchGames();
+    
+    // Fetch total counts for accurate stats (not limited by pagination)
+    fetchTotalCounts();
+    fetchAllGamesForStats();
 
     // Trainings: load only if deep-link or user opens trainings section
     const params = new URLSearchParams(window.location.search);
@@ -2071,6 +2079,43 @@ function canEdit(item) {
   if (isSuperAdminEmail(userEmail)) return true;
   const creatorEmail = (item.createdBy || '').toLowerCase();
   return creatorEmail === userEmail;
+}
+
+function fetchTotalCounts() {
+  // Общее количество игроков
+  db.collection("padel_players").count().get()
+    .then(snapshot => {
+      totalPlayers = snapshot.data().count;
+      updateStats();
+    })
+    .catch(err => console.error("Players count error:", err));
+
+  // Общее количество турниров
+  db.collection("padel_tournaments").count().get()
+    .then(snapshot => {
+      totalTournaments = snapshot.data().count;
+      updateStats();
+    })
+    .catch(err => console.error("Tournaments count error:", err));
+
+  // Общее количество завершённых отдельных игр (не из турниров)
+  db.collection("padel_games").where("status", "==", "finished").count().get()
+    .then(snapshot => {
+      totalGames = snapshot.data().count;
+      updateStats();
+    })
+    .catch(err => console.error("Games count error:", err));
+}
+
+function fetchAllGamesForStats() {
+  // Загружаем ВСЕ игры только для подсчёта статистики (не для отображения)
+  db.collection("padel_games").orderBy("createdAt", "desc").get()
+    .then(snapshot => {
+      allGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderPlayers();
+      updateStats();
+    })
+    .catch(err => console.error("All games for stats error:", err));
 }
 
 function fetchPlayers() {
@@ -2977,8 +3022,9 @@ async function recalcTournamentCounts() {
 
 async function recalcPlayerGames() {
   // Count finished games (not tied to tournaments) for each player
+  const gamesToCount = allGames.length > 0 ? allGames : games;
   const gameCounts = {};
-  games.forEach(g => {
+  gamesToCount.forEach(g => {
     if (g.status === 'finished' && !g.tournamentId) {
       const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
       allPlayerIds.forEach(pid => {
@@ -3004,8 +3050,10 @@ function renderPlayers() {
   }
 
   // Count finished standalone games for each player dynamically
+  // Используем allGames (все игры без лимита) если доступны, иначе games
+  const gamesToCount = allGames.length > 0 ? allGames : games;
   const gamesCount = {};
-  games.forEach(g => {
+  gamesToCount.forEach(g => {
     if (g.status === 'finished' && !g.tournamentId) {
       const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
       allPlayerIds.forEach(pid => {
@@ -5235,15 +5283,9 @@ function renderAllUsers() {
 // STATS
 // ============================================
 function updateStats() {
-  document.getElementById('statPlayers').textContent = players.length;
-  document.getElementById('statTournaments').textContent = tournaments.length;
-
-  let totalMatches = 0;
-  // Считаем только отдельные завершённые игры (не из турниров)
-  const finishedGames = games.filter(g => g.status === 'finished' && !g.tournamentId).length;
-  totalMatches = finishedGames;
-
-  document.getElementById('statMatches').textContent = totalMatches;
+  document.getElementById('statPlayers').textContent = totalPlayers || players.length;
+  document.getElementById('statTournaments').textContent = totalTournaments || tournaments.length;
+  document.getElementById('statMatches').textContent = totalGames || games.filter(g => g.status === 'finished' && !g.tournamentId).length;
 }
 
 // ============================================
