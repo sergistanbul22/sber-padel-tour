@@ -1937,13 +1937,13 @@ let currentUserData = null; // cached Firestore user data
 let userRole = 'player'; // 'player' | 'admin' | 'superadmin'
 let isAdmin = false;
 let isSuperAdmin = false;
-
-// Submit lock flags to prevent double-clicks
-const _submitting = {};
 let authReady = false; // true after first onAuthStateChanged callback
 let players = [];
 let tournaments = [];
 let games = [];
+let _gamesLastDoc = null;
+let _hasMoreGames = true;
+const GAMES_PAGE_SIZE = 20;
 let trainings = [];
 let trainingLocations = [];
 let trainingCoaches = [];
@@ -1957,6 +1957,25 @@ let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
 
 // ============================================
+// CACHE
+// ============================================
+const CACHE_PREFIX = 'spt_';
+
+function saveToCache(key, data) {
+  try {
+    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, timestamp: Date.now() }));
+  } catch (e) { console.warn('Cache save failed:', e); }
+}
+
+function loadFromCache(key) {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return null;
+    return JSON.parse(raw).data;
+  } catch (e) { return null; }
+}
+
+// ============================================
 // INIT
 // ============================================
 function init() {
@@ -1965,23 +1984,50 @@ function init() {
     auth = firebase.auth();
     db = firebase.firestore();
 
+    // Enable offline persistence for faster loads
+    db.enablePersistence({ synchronizeTabs: true })
+      .catch(err => {
+        if (err.code == 'failed-precondition') {
+          console.log('Persistence failed: multiple tabs open');
+        } else if (err.code == 'unimplemented') {
+          console.log('Persistence not available in this browser');
+        }
+      });
+
     // Set auth persistence to LOCAL (remember session across reloads)
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
       .catch(err => console.error("Auth persistence error:", err));
 
-    // Подписка на данные - работает для всех, даже без авторизации
-    subscribeToPlayers();
-    subscribeToTournaments();
-    subscribeToGames();
-    subscribeToTrainings();
-    subscribeToTrainingMeta();
+    // Load cached data immediately for instant stats display
+    players = loadFromCache('players') || [];
+    tournaments = loadFromCache('tournaments') || [];
+    games = loadFromCache('games') || [];
+    trainings = loadFromCache('trainings') || [];
+    trainingLocations = loadFromCache('trainingLocations') || [];
+    trainingCoaches = loadFromCache('trainingCoaches') || [];
+    trainingGroups = loadFromCache('trainingGroups') || [];
+
+    // Show stats immediately from cache
+    updateStats();
+
+    // Fetch fresh data for home page (players + limited tournaments/games)
+    fetchPlayers();
+    fetchTournaments();
+    fetchGames();
+
+    // Trainings: load only if deep-link or user opens trainings section
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('training') || (window.location.hash && window.location.hash.startsWith('#training='))) {
+      fetchTrainings();
+    }
+    fetchTrainingMeta();
 
     auth.onAuthStateChanged(handleAuthStateChanged);
 
     // Handle deep-link to specific training
     window.addEventListener('hashchange', checkUrlHash);
+    setTimeout(checkUrlHash, 500);
     setTimeout(checkUrlHash, 3000);
-    setTimeout(checkUrlHash, 8000); // Second chance for slow mobile connections
 
     // Register Service Worker for PWA
     if ('serviceWorker' in navigator) {
@@ -2027,32 +2073,34 @@ function canEdit(item) {
   return creatorEmail === userEmail;
 }
 
-function subscribeToPlayers() {
-  db.collection("padel_players").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderPlayers();
-    updateStats();
-    renderPlayerSelect();
-  }, err => {
-    console.error("Players subscription error:", err);
-  });
+function fetchPlayers() {
+  db.collection("padel_players").orderBy("createdAt", "desc").get()
+    .then(snapshot => {
+      players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('players', players);
+      renderPlayers();
+      updateStats();
+      renderPlayerSelect();
+    })
+    .catch(err => console.error("Players fetch error:", err));
 }
 
-function subscribeToTournaments() {
-  db.collection("padel_tournaments").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    tournaments = snapshot.docs.map(d => {
-      const data = d.data();
-      if (data.scheduleData) {
-        try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
-      }
-      return { id: d.id, ...data };
-    });
-    renderTournaments();
-    updateStats();
-    recalcTournamentCounts();
-  }, err => {
-    console.error("Tournaments subscription error:", err);
-  });
+function fetchTournaments() {
+  db.collection("padel_tournaments").orderBy("createdAt", "desc").limit(10).get()
+    .then(snapshot => {
+      tournaments = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data.scheduleData) {
+          try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
+        }
+        return { id: d.id, ...data };
+      });
+      saveToCache('tournaments', tournaments);
+      renderTournaments();
+      updateStats();
+      recalcTournamentCounts();
+    })
+    .catch(err => console.error("Tournaments fetch error:", err));
 }
 
 function handleAuthStateChanged(user) {
@@ -2600,21 +2648,30 @@ function showSection(section) {
   const bottomBtn = document.querySelector(`.bottom-nav .nav-btn[data-section="${section}"]`);
   if (bottomBtn) bottomBtn.classList.add('active');
 
+  // Lazy loading: fetch data only when section is opened
   if (section === 'games') {
+    if (games.length === 0) fetchGames();
     renderGames();
   }
   if (section === 'players') {
+    if (players.length === 0) fetchPlayers();
     renderPlayers();
+  }
+  if (section === 'tournaments') {
+    if (tournaments.length === 0) fetchTournaments();
+    renderTournaments();
   }
   if (section === 'profile') {
     renderProfile();
   }
   if (section === 'trainings') {
+    if (trainings.length === 0) fetchTrainings();
+    if (trainingLocations.length === 0) fetchTrainingMeta();
     renderTrainings();
   }
   if (section === 'admin' && isAdmin) {
     renderPlayerSelect();
-    loadUsers(); // Загружаем/обновляем список пользователей
+    loadUsers();
   }
 
   window.scrollTo(0, 0);
@@ -3580,8 +3637,6 @@ function autoFormPairs() {
 }
 
 async function createTournament() {
-  if (_submitting.createTournament) { showToast("Создание уже выполняется...", "warning"); return; }
-  _submitting.createTournament = true;
   const name = document.getElementById('tournamentName').value.trim();
   const date = document.getElementById('tournamentDate').value;
   const type = document.getElementById('tournamentType').value;
@@ -3689,6 +3744,7 @@ async function createTournament() {
     btn.disabled = false;
     btn.innerHTML = '🏆 Создать турнир';
   }
+}
 
 // ============================================
 function generateSchedule(numPlayers) {
@@ -4103,13 +4159,11 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
 }
 
 async function finalizeTournament(tournamentId) {
-  if (_submitting['finalize_' + tournamentId]) { showToast("Завершение уже выполняется...", "warning"); return; }
   if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
-  _submitting['finalize_' + tournamentId] = true;
 
   try {
     const t = tournaments.find(x => x.id === tournamentId);
-    if (!t) { _submitting['finalize_' + tournamentId] = false; return; }
+    if (!t) return;
 
     // Calculate points per player
     const playerPoints = {};
@@ -4259,8 +4313,6 @@ async function finalizeTournament(tournamentId) {
     await loadPlayers();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting['finalize_' + tournamentId] = false;
   }
 }
 
@@ -5197,51 +5249,82 @@ function updateStats() {
 // ============================================
 // GAMES
 // ============================================
-function subscribeToGames() {
-  db.collection("padel_games").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderGames();
-    renderPlayers(); // обновить счётчик игр в таблице игроков
-    updateStats(); // обновить счётчик матчей на главной
-  }, err => {
-    console.error("Games subscription error:", err);
-  });
+function fetchGames() {
+  _gamesLastDoc = null;
+  _hasMoreGames = true;
+  db.collection("padel_games").orderBy("createdAt", "desc").limit(GAMES_PAGE_SIZE).get()
+    .then(snapshot => {
+      games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      _gamesLastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
+      _hasMoreGames = snapshot.docs.length === GAMES_PAGE_SIZE;
+      saveToCache('games', games);
+      renderGames();
+      renderPlayers();
+      updateStats();
+    })
+    .catch(err => console.error("Games fetch error:", err));
 }
 
-function subscribeToTrainings() {
-  db.collection("padel_trainings").onSnapshot(snapshot => {
-    trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderTrainings();
-    // Try deep-link after trainings load (for mobile/Telegram browsers)
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('training')) {
-      console.log('[DEEP-LINK] Data loaded, checking query param...');
-      checkUrlHash();
-    } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
-      console.log('[DEEP-LINK] Data loaded, checking hash...');
-      checkUrlHash();
-    }
-  }, err => {
-    console.error("Trainings subscription error:", err);
-  });
+function fetchMoreGames() {
+  if (!_hasMoreGames || !_gamesLastDoc) return;
+  
+  const btn = document.getElementById('loadMoreGamesBtn');
+  if (btn) btn.textContent = 'Загрузка...';
+  
+  db.collection("padel_games").orderBy("createdAt", "desc").startAfter(_gamesLastDoc).limit(GAMES_PAGE_SIZE).get()
+    .then(snapshot => {
+      const newGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      games = games.concat(newGames);
+      _gamesLastDoc = snapshot.docs[snapshot.docs.length - 1] || _gamesLastDoc;
+      _hasMoreGames = snapshot.docs.length === GAMES_PAGE_SIZE;
+      saveToCache('games', games);
+      renderGames();
+      renderPlayers();
+    })
+    .catch(err => {
+      console.error("Games fetch more error:", err);
+      if (btn) btn.textContent = 'Показать далее...';
+    });
 }
 
-function subscribeToTrainingMeta() {
-  db.collection("settings").doc("training_meta").onSnapshot(doc => {
-    if (doc.exists) {
-      const data = doc.data();
-      trainingLocations = data.locations || [];
-      trainingCoaches = data.coaches || [];
-      trainingGroups = data.groups || [];
-    } else {
-      trainingLocations = [];
-      trainingCoaches = [];
-      trainingGroups = [];
-    }
-    populateTrainingSelects();
-  }, err => {
-    console.error("Training meta subscription error:", err);
-  });
+function fetchTrainings() {
+  db.collection("padel_trainings").get()
+    .then(snapshot => {
+      trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('trainings', trainings);
+      renderTrainings();
+      // Try deep-link after trainings load
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('training')) {
+        console.log('[DEEP-LINK] Data loaded, checking query param...');
+        checkUrlHash();
+      } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
+        console.log('[DEEP-LINK] Data loaded, checking hash...');
+        checkUrlHash();
+      }
+    })
+    .catch(err => console.error("Trainings fetch error:", err));
+}
+
+function fetchTrainingMeta() {
+  db.collection("settings").doc("training_meta").get()
+    .then(doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        trainingLocations = data.locations || [];
+        trainingCoaches = data.coaches || [];
+        trainingGroups = data.groups || [];
+      } else {
+        trainingLocations = [];
+        trainingCoaches = [];
+        trainingGroups = [];
+      }
+      saveToCache('trainingLocations', trainingLocations);
+      saveToCache('trainingCoaches', trainingCoaches);
+      saveToCache('trainingGroups', trainingGroups);
+      populateTrainingSelects();
+    })
+    .catch(err => console.error("Training meta fetch error:", err));
 }
 
 function checkUrlHash() {
@@ -5341,6 +5424,27 @@ function renderGames() {
   });
 
   container.innerHTML = html;
+
+  // Add "Load more" button if there are more games
+  if (_hasMoreGames) {
+    const loadMoreHtml = `
+      <div style="text-align: center; margin-top: 16px;">
+        <button id="loadMoreGamesBtn" onclick="fetchMoreGames()" style="
+          padding: 10px 24px;
+          border: 1px solid var(--accent);
+          background: transparent;
+          color: var(--accent);
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          width: 100%;
+          max-width: 300px;
+        ">Показать далее...</button>
+      </div>
+    `;
+    container.insertAdjacentHTML('beforeend', loadMoreHtml);
+  }
 }
 
 function closeCreateTournamentModal() {
@@ -5385,9 +5489,6 @@ function closeCreateGameModal() {
 }
 
 async function createGame() {
-  if (_submitting.createGame) { showToast("Создание уже выполняется...", "warning"); return; }
-  _submitting.createGame = true;
-
   const date = document.getElementById('gameDate').value;
   const p11 = document.getElementById('gamePair1Player1').value;
   const p12 = document.getElementById('gamePair1Player2').value;
@@ -5395,13 +5496,11 @@ async function createGame() {
   const p22 = document.getElementById('gamePair2Player2').value;
 
   if (!date || !p11 || !p12 || !p21 || !p22) {
-    _submitting.createGame = false;
     showToast("Заполните все поля", "error");
     return;
   }
 
   if (p11 === p12 || p21 === p22 || [p11, p12].includes(p21) || [p11, p12].includes(p22)) {
-    _submitting.createGame = false;
     showToast("Игроки должны быть разными", "error");
     return;
   }
@@ -5421,11 +5520,10 @@ async function createGame() {
 
     closeCreateGameModal();
     showToast("Игра создана", "success");
+    // Открываем игру для внесения результата
     setTimeout(() => openGame(docRef.id), 300);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting.createGame = false;
   }
 }
 
@@ -5639,40 +5737,35 @@ function selectGameScore(team, value) {
 }
 
 async function saveGameSet(gameId) {
-  if (_submitting['saveSet_' + gameId]) { showToast("Сохранение уже выполняется...", "warning"); return; }
-  _submitting['saveSet_' + gameId] = true;
+
   const s1 = gameScoreSelections.score1;
   const s2 = gameScoreSelections.score2;
 
   if (s1 === null || s2 === null) {
-    _submitting['saveSet_' + gameId] = false;
     showToast("Выберите счёт обеих пар", "error");
     return;
   }
 
   // Validate tennis score
   if (s1 === s2) {
-    _submitting['saveSet_' + gameId] = false;
     showToast("В теннисе не может быть ничьей", "error");
     return;
   }
   const max = Math.max(s1, s2);
   const min = Math.min(s1, s2);
   if (max < 6 || (max === 6 && min >= 5) || (max === 7 && min < 5)) {
-    _submitting['saveSet_' + gameId] = false;
     showToast("Некорректный теннисный счёт. Победитель должен набрать минимум 6 геймов с разницей 2", "error");
     return;
   }
 
   try {
     const g = games.find(x => x.id === gameId);
-    if (!g) { _submitting['saveSet_' + gameId] = false; return; }
+    if (!g) return;
 
     const newSets = [...(g.sets || [])];
     // Если уже есть сет с таким счётом - заменяем, иначе добавляем
     const existingIdx = newSets.findIndex(s => s.score1 === s1 && s.score2 === s2);
     if (existingIdx >= 0) {
-      _submitting['saveSet_' + gameId] = false;
       showToast("Такой сет уже есть", "error");
       return;
     }
@@ -5687,8 +5780,6 @@ async function saveGameSet(gameId) {
     openGame(gameId); // Перерисовываем
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting['saveSet_' + gameId] = false;
   }
 }
 
@@ -5781,14 +5872,13 @@ async function calculateGameRTTF(game) {
 }
 
 async function finishGame(gameId) {
-  if (_submitting['finish_' + gameId]) { showToast("Завершение уже выполняется...", "warning"); return; }
   if (!confirm("Завершить игру? Это действие нельзя отменить.")) return;
-  _submitting['finish_' + gameId] = true;
 
   try {
     const g = games.find(x => x.id === gameId);
-    if (!g) { _submitting['finish_' + gameId] = false; return; }
+    if (!g) return;
 
+    // Calculate RTTF for the game
     const ratingChanges = await calculateGameRTTF(g);
 
     await db.collection("padel_games").doc(gameId).update({
@@ -5801,8 +5891,6 @@ async function finishGame(gameId) {
     showToast("Игра завершена. Рейтинги обновлены.", "success");
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting['finish_' + gameId] = false;
   }
 }
 
@@ -6017,11 +6105,7 @@ function renderTrainingSlotInputs() {
 }
 
 async function createTraining() {
-  if (_submitting.createTraining) { showToast("Создание уже выполняется...", "warning"); return; }
-  _submitting.createTraining = true;
-
   if (!isAdmin) {
-    _submitting.createTraining = false;
     showToast("Только администратор может создавать тренировки", "error");
     return;
   }
@@ -6035,8 +6119,8 @@ async function createTraining() {
   const trainingType = document.getElementById('trainingType') ? document.getElementById('trainingType').value : 'open';
   const totalSlots = parseInt(document.getElementById('trainingSlotsCount').value) || 4;
 
-  if (!date) { _submitting.createTraining = false; showToast("Выберите дату", "error"); return; }
-  if (!location) { _submitting.createTraining = false; showToast("Выберите локацию", "error"); return; }
+  if (!date) { showToast("Выберите дату", "error"); return; }
+  if (!location) { showToast("Выберите локацию", "error"); return; }
 
   const slots = [];
   for (let i = 0; i < totalSlots; i++) {
@@ -6070,8 +6154,6 @@ async function createTraining() {
     closeCreateTrainingModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting.createTraining = false;
   }
 }
 
