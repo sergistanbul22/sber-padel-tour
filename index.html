@@ -4468,6 +4468,7 @@ async function recalculateTournament(tournamentId) {
 
     showToast("Итоги пересчитаны!", "success");
     openTournament(tournamentId);
+    await loadTournaments();
     await loadPlayers();
   } catch (e) {
     showToast("Ошибка пересчёта: " + e.message, "error");
