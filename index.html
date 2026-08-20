@@ -1954,6 +1954,25 @@ let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
 
 // ============================================
+// CACHE
+// ============================================
+const CACHE_PREFIX = 'spt_';
+
+function saveToCache(key, data) {
+  try {
+    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, timestamp: Date.now() }));
+  } catch (e) { console.warn('Cache save failed:', e); }
+}
+
+function loadFromCache(key) {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return null;
+    return JSON.parse(raw).data;
+  } catch (e) { return null; }
+}
+
+// ============================================
 // INIT
 // ============================================
 function init() {
@@ -1962,23 +1981,50 @@ function init() {
     auth = firebase.auth();
     db = firebase.firestore();
 
+    // Enable offline persistence for faster loads
+    db.enablePersistence({ synchronizeTabs: true })
+      .catch(err => {
+        if (err.code == 'failed-precondition') {
+          console.log('Persistence failed: multiple tabs open');
+        } else if (err.code == 'unimplemented') {
+          console.log('Persistence not available in this browser');
+        }
+      });
+
     // Set auth persistence to LOCAL (remember session across reloads)
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
       .catch(err => console.error("Auth persistence error:", err));
 
-    // Подписка на данные - работает для всех, даже без авторизации
-    subscribeToPlayers();
-    subscribeToTournaments();
-    subscribeToGames();
-    subscribeToTrainings();
-    subscribeToTrainingMeta();
+    // Load cached data immediately for instant stats display
+    players = loadFromCache('players') || [];
+    tournaments = loadFromCache('tournaments') || [];
+    games = loadFromCache('games') || [];
+    trainings = loadFromCache('trainings') || [];
+    trainingLocations = loadFromCache('trainingLocations') || [];
+    trainingCoaches = loadFromCache('trainingCoaches') || [];
+    trainingGroups = loadFromCache('trainingGroups') || [];
+
+    // Show stats immediately from cache
+    updateStats();
+
+    // Fetch fresh data for home page (players + limited tournaments/games)
+    fetchPlayers();
+    fetchTournaments();
+    fetchGames();
+
+    // Trainings: load only if deep-link or user opens trainings section
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('training') || (window.location.hash && window.location.hash.startsWith('#training='))) {
+      fetchTrainings();
+    }
+    fetchTrainingMeta();
 
     auth.onAuthStateChanged(handleAuthStateChanged);
 
     // Handle deep-link to specific training
     window.addEventListener('hashchange', checkUrlHash);
+    setTimeout(checkUrlHash, 500);
     setTimeout(checkUrlHash, 3000);
-    setTimeout(checkUrlHash, 8000); // Second chance for slow mobile connections
 
     // Register Service Worker for PWA
     if ('serviceWorker' in navigator) {
@@ -2024,32 +2070,34 @@ function canEdit(item) {
   return creatorEmail === userEmail;
 }
 
-function subscribeToPlayers() {
-  db.collection("padel_players").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderPlayers();
-    updateStats();
-    renderPlayerSelect();
-  }, err => {
-    console.error("Players subscription error:", err);
-  });
+function fetchPlayers() {
+  db.collection("padel_players").orderBy("createdAt", "desc").get()
+    .then(snapshot => {
+      players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('players', players);
+      renderPlayers();
+      updateStats();
+      renderPlayerSelect();
+    })
+    .catch(err => console.error("Players fetch error:", err));
 }
 
-function subscribeToTournaments() {
-  db.collection("padel_tournaments").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    tournaments = snapshot.docs.map(d => {
-      const data = d.data();
-      if (data.scheduleData) {
-        try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
-      }
-      return { id: d.id, ...data };
-    });
-    renderTournaments();
-    updateStats();
-    recalcTournamentCounts();
-  }, err => {
-    console.error("Tournaments subscription error:", err);
-  });
+function fetchTournaments() {
+  db.collection("padel_tournaments").orderBy("createdAt", "desc").limit(10).get()
+    .then(snapshot => {
+      tournaments = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data.scheduleData) {
+          try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
+        }
+        return { id: d.id, ...data };
+      });
+      saveToCache('tournaments', tournaments);
+      renderTournaments();
+      updateStats();
+      recalcTournamentCounts();
+    })
+    .catch(err => console.error("Tournaments fetch error:", err));
 }
 
 function handleAuthStateChanged(user) {
@@ -2597,18 +2645,34 @@ function showSection(section) {
   const bottomBtn = document.querySelector(`.bottom-nav .nav-btn[data-section="${section}"]`);
   if (bottomBtn) bottomBtn.classList.add('active');
 
+  // Lazy loading: fetch data only when section is opened
   if (section === 'games') {
+    if (games.length === 0) fetchGames();
     renderGames();
   }
   if (section === 'players') {
+    if (players.length === 0) fetchPlayers();
     renderPlayers();
+  }
+  if (section === 'tournaments') {
+    if (tournaments.length === 0) fetchTournaments();
+    renderTournaments();
   }
   if (section === 'profile') {
     renderProfile();
   }
   if (section === 'trainings') {
+    if (trainings.length === 0) fetchTrainings();
+    if (trainingLocations.length === 0) fetchTrainingMeta();
     renderTrainings();
   }
+  if (section === 'admin' && isAdmin) {
+    renderPlayerSelect();
+    loadUsers();
+  }
+
+  window.scrollTo(0, 0);
+}
   if (section === 'admin' && isAdmin) {
     renderPlayerSelect();
     loadUsers(); // Загружаем/обновляем список пользователей
@@ -5189,51 +5253,56 @@ function updateStats() {
 // ============================================
 // GAMES
 // ============================================
-function subscribeToGames() {
-  db.collection("padel_games").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderGames();
-    renderPlayers(); // обновить счётчик игр в таблице игроков
-    updateStats(); // обновить счётчик матчей на главной
-  }, err => {
-    console.error("Games subscription error:", err);
-  });
+function fetchGames() {
+  db.collection("padel_games").orderBy("createdAt", "desc").limit(10).get()
+    .then(snapshot => {
+      games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('games', games);
+      renderGames();
+      renderPlayers();
+      updateStats();
+    })
+    .catch(err => console.error("Games fetch error:", err));
 }
 
-function subscribeToTrainings() {
-  db.collection("padel_trainings").onSnapshot(snapshot => {
-    trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderTrainings();
-    // Try deep-link after trainings load (for mobile/Telegram browsers)
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('training')) {
-      console.log('[DEEP-LINK] Data loaded, checking query param...');
-      checkUrlHash();
-    } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
-      console.log('[DEEP-LINK] Data loaded, checking hash...');
-      checkUrlHash();
-    }
-  }, err => {
-    console.error("Trainings subscription error:", err);
-  });
+function fetchTrainings() {
+  db.collection("padel_trainings").get()
+    .then(snapshot => {
+      trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('trainings', trainings);
+      renderTrainings();
+      // Try deep-link after trainings load
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('training')) {
+        console.log('[DEEP-LINK] Data loaded, checking query param...');
+        checkUrlHash();
+      } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
+        console.log('[DEEP-LINK] Data loaded, checking hash...');
+        checkUrlHash();
+      }
+    })
+    .catch(err => console.error("Trainings fetch error:", err));
 }
 
-function subscribeToTrainingMeta() {
-  db.collection("settings").doc("training_meta").onSnapshot(doc => {
-    if (doc.exists) {
-      const data = doc.data();
-      trainingLocations = data.locations || [];
-      trainingCoaches = data.coaches || [];
-      trainingGroups = data.groups || [];
-    } else {
-      trainingLocations = [];
-      trainingCoaches = [];
-      trainingGroups = [];
-    }
-    populateTrainingSelects();
-  }, err => {
-    console.error("Training meta subscription error:", err);
-  });
+function fetchTrainingMeta() {
+  db.collection("settings").doc("training_meta").get()
+    .then(doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        trainingLocations = data.locations || [];
+        trainingCoaches = data.coaches || [];
+        trainingGroups = data.groups || [];
+      } else {
+        trainingLocations = [];
+        trainingCoaches = [];
+        trainingGroups = [];
+      }
+      saveToCache('trainingLocations', trainingLocations);
+      saveToCache('trainingCoaches', trainingCoaches);
+      saveToCache('trainingGroups', trainingGroups);
+      populateTrainingSelects();
+    })
+    .catch(err => console.error("Training meta fetch error:", err));
 }
 
 function checkUrlHash() {
