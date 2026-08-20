@@ -6748,6 +6748,7 @@ async function confirmTrainingApplication(trainingId, playerId) {
     }
     
     openTraining(trainingId); // refresh
+    renderTrainings(); // refresh list view too
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
