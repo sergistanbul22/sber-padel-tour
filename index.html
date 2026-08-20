@@ -51,38 +51,6 @@
     overflow-x: hidden;
   }
 
-  /* Pull to Refresh */
-  .ptr-indicator {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s;
-    transform: translateY(-100%);
-  }
-  .ptr-indicator.visible {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  .ptr-spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: ptr-spin 0.8s linear infinite;
-  }
-  @keyframes ptr-spin {
-    to { transform: rotate(360deg); }
-  }
-
   /* Header */
   .header {
     background: rgba(10,10,10,0.95);
@@ -1390,11 +1358,6 @@
 </head>
 <body>
 
-<!-- Pull to Refresh Indicator -->
-<div class="ptr-indicator" id="ptrIndicator">
-  <div class="ptr-spinner"></div>
-</div>
-
 <!-- Header -->
 <header class="header">
   <div class="header-inner">
@@ -2081,9 +2044,6 @@ function init() {
 
     // iOS install banner
     checkIosInstallBanner();
-
-    // Pull to Refresh setup
-    setupPullToRefresh();
   } catch (e) {
     console.error("Firebase init error:", e);
     showToast("Ошибка инициализации Firebase. Проверьте конфигурацию.", "error");
@@ -2725,7 +2685,7 @@ function showSection(section) {
     renderProfile();
   }
   if (section === 'trainings') {
-    fetchTrainings();
+    if (trainings.length === 0) fetchTrainings();
     if (trainingLocations.length === 0) fetchTrainingMeta();
     renderTrainings();
   }
@@ -6277,12 +6237,12 @@ function renderTrainings() {
     html += `
       <div class="card" style="position: relative; padding: 16px;${isPast ? ' opacity: 0.55;' : ''}">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <div style="cursor: pointer; flex: 1;" onclick="${isPast ? '' : `openTraining('${t.id}')`}">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-              <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
+          <div style="cursor: pointer; flex: 1; min-width: 0;" onclick="${isPast ? '' : `openTraining('${t.id}')`}">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
+              <span style="font-size: 16px; font-weight: 700; color: var(--text-primary); white-space: nowrap;">
                 ${isPast ? '✓ ' : ''}📅 ${dateStr}${isPast ? ' <span style="font-size:12px;color:var(--text-muted);">(завершена)</span>' : ''}
               </span>
-              ${hasPendingApps ? `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(255,149,0,0.15); color: var(--warning);">📝 ${applicationsCount} заявок</span>` : ''}
+              ${hasPendingApps ? `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(255,149,0,0.15); color: #FF9500; white-space: nowrap; flex-shrink: 0;">📝 ${applicationsCount} заявок</span>` : ''}
             </div>
             <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
               📍 ${escapeHtml(t.location)}${t.coach ? ' | 🎾 ' + escapeHtml(t.coach) : ''}${t.group ? ' | 👥 ' + escapeHtml(t.group) : ''}
@@ -6773,6 +6733,20 @@ async function confirmTrainingApplication(trainingId, playerId) {
       applications: updatedApps
     });
     showToast("Заявка подтверждена", "success");
+    
+    // Refresh training data from Firestore before reopening
+    const doc = await db.collection("padel_trainings").doc(trainingId).get();
+    if (doc.exists) {
+      const idx = trainings.findIndex(x => x.id === trainingId);
+      const updatedTraining = { id: doc.id, ...doc.data() };
+      if (idx >= 0) {
+        trainings[idx] = updatedTraining;
+      } else {
+        trainings.push(updatedTraining);
+      }
+      saveToCache('trainings', trainings);
+    }
+    
     openTraining(trainingId); // refresh
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -6808,52 +6782,6 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
-}
-
-// ============================================
-// PULL TO REFRESH
-// ============================================
-function setupPullToRefresh() {
-  let startY = 0;
-  let isPulling = false;
-  const indicator = document.getElementById('ptrIndicator');
-  const threshold = 80; // pixels to trigger refresh
-
-  document.addEventListener('touchstart', function(e) {
-    if (window.scrollY === 0) {
-      startY = e.touches[0].clientY;
-      isPulling = true;
-    }
-  }, { passive: true });
-
-  document.addEventListener('touchmove', function(e) {
-    if (!isPulling) return;
-    const currentY = e.touches[0].clientY;
-    const diff = currentY - startY;
-
-    if (diff > 0 && window.scrollY === 0) {
-      indicator.classList.add('visible');
-      if (diff > threshold) {
-        indicator.style.opacity = '1';
-      }
-    }
-  }, { passive: true });
-
-  document.addEventListener('touchend', function(e) {
-    if (!isPulling) return;
-    const currentY = e.changedTouches[0].clientY;
-    const diff = currentY - startY;
-
-    indicator.classList.remove('visible');
-    isPulling = false;
-
-    if (diff > threshold && window.scrollY === 0) {
-      showToast('Обновление...', 'info');
-      setTimeout(() => {
-        window.location.reload();
-      }, 300);
-    }
-  }, { passive: true });
 }
 
 // ============================================
