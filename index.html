@@ -5526,6 +5526,10 @@ async function createGame() {
 
     closeCreateGameModal();
     showToast("Игра создана", "success");
+    // Refresh games list and stats
+    fetchGames();
+    fetchCounters();
+    updateStats();
     // Открываем игру для внесения результата
     setTimeout(() => openGame(docRef.id), 300);
   } catch (e) {
@@ -5781,6 +5785,8 @@ async function saveGameSet(gameId) {
 
     // Обновляем локально
     g.sets = newSets;
+    saveToCache('games', games);
+    renderGames();
 
     showToast("Сет сохранён", "success");
     openGame(gameId); // Перерисовываем
@@ -5895,6 +5901,15 @@ async function finishGame(gameId) {
 
     closeGameModal();
     showToast("Игра завершена. Рейтинги обновлены.", "success");
+    // Refresh games list and stats
+    const idx = games.findIndex(x => x.id === gameId);
+    if (idx >= 0) {
+      games[idx] = { ...games[idx], status: 'finished', finishedAt: new Date().toISOString(), ratingChanges: ratingChanges || {} };
+      saveToCache('games', games);
+    }
+    renderGames();
+    fetchCounters();
+    updateStats();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -5948,6 +5963,12 @@ async function deleteGame(gameId) {
     }
 
     await db.collection("padel_games").doc(gameId).delete();
+    // Refresh local state
+    games = games.filter(x => x.id !== gameId);
+    saveToCache('games', games);
+    renderGames();
+    fetchCounters();
+    updateStats();
     showToast("Игра удалена", "success");
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -6500,7 +6521,14 @@ async function changeTrainingPlayer(trainingId, slotIndex, newPlayerId) {
 
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
     showToast("Запись обновлена", "success");
-    openTraining(trainingId); // refresh
+    // Update local cache
+    const idx = trainings.findIndex(x => x.id === trainingId);
+    if (idx >= 0) {
+      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
+      saveToCache('trainings', trainings);
+    }
+    renderTrainings(); // refresh list
+    openTraining(trainingId); // refresh detail
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -6536,6 +6564,13 @@ async function cancelTrainingBooking(trainingId, slotIndex) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
+    // Update local cache
+    const idx = trainings.findIndex(x => x.id === trainingId);
+    if (idx >= 0) {
+      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
+      saveToCache('trainings', trainings);
+    }
+    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6599,6 +6634,13 @@ async function bookTrainingSlot(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
+    // Update local cache
+    const idx = trainings.findIndex(x => x.id === trainingId);
+    if (idx >= 0) {
+      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
+      saveToCache('trainings', trainings);
+    }
+    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6655,6 +6697,13 @@ async function applyForTraining(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ applications: updatedApps });
+    // Update local cache
+    const idx = trainings.findIndex(x => x.id === trainingId);
+    if (idx >= 0) {
+      trainings[idx] = { ...trainings[idx], applications: updatedApps };
+      saveToCache('trainings', trainings);
+    }
+    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6687,6 +6736,13 @@ async function cancelTrainingApplication(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ applications: updatedApps });
+    // Update local cache
+    const idx = trainings.findIndex(x => x.id === trainingId);
+    if (idx >= 0) {
+      trainings[idx] = { ...trainings[idx], applications: updatedApps };
+      saveToCache('trainings', trainings);
+    }
+    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
