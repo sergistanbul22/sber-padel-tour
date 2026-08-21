@@ -1994,6 +1994,7 @@ let selectedPlayersForTournament = new Set();
 let rrPairs = []; // Round Robin pairs: array of {id, playerIds: [p1, p2], name}
 let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
+let unsubscribeTournaments = null;
 
 // ============================================
 // CACHE
@@ -2052,6 +2053,7 @@ function init() {
     // Fetch fresh data for home page (players + limited tournaments/games)
     fetchPlayers();
     fetchTournaments();
+    subscribeToTournaments();
     fetchGames();
     
     // Fetch total counts for accurate stats (not limited by pagination)
@@ -2173,6 +2175,10 @@ function handleAuthStateChanged(user) {
   if (unsubscribeUsersList) {
     unsubscribeUsersList();
     unsubscribeUsersList = null;
+  }
+  if (unsubscribeTournaments) {
+    unsubscribeTournaments();
+    unsubscribeTournaments = null;
   }
 
   if (user) {
@@ -2335,6 +2341,28 @@ function subscribeToUsersList() {
   }, err => {
     console.error("Users list subscription error:", err);
   });
+}
+
+// Подписка на турниры в реальном времени
+function subscribeToTournaments() {
+  if (unsubscribeTournaments) return; // уже подписаны
+  
+  unsubscribeTournaments = db.collection("padel_tournaments")
+    .orderBy("createdAt", "desc")
+    .onSnapshot(snapshot => {
+      tournaments = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data.scheduleData) {
+          try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
+        }
+        return { id: d.id, ...data };
+      });
+      saveToCache('tournaments', tournaments);
+      renderTournaments();
+      updateStats();
+    }, err => {
+      console.error("Tournaments subscription error:", err);
+    });
 }
 
 async function checkUserStatus() {
@@ -2717,7 +2745,7 @@ function showSection(section) {
     renderPlayers();
   }
   if (section === 'tournaments') {
-    if (tournaments.length === 0) fetchTournaments();
+    fetchTournaments(); // Always fetch fresh data
     renderTournaments();
   }
   if (section === 'profile') {
@@ -3005,8 +3033,8 @@ async function loadPlayers() {
   // Подписка уже работает через subscribeToPlayers()
 }
 
-async function loadTournaments() {
-  // Подписка уже работает через subscribeToTournaments()
+function loadTournaments() {
+  return fetchTournaments();
 }
 
 async function recalcTournamentCounts() {
@@ -3194,8 +3222,8 @@ async function savePlayerRating() {
 // ============================================
 // TOURNAMENTS
 // ============================================
-async function loadTournaments() {
-  // Подписка уже работает через subscribeToTournaments()
+function loadTournaments() {
+  return fetchTournaments();
 }
 
 function renderTournaments() {
@@ -3230,7 +3258,7 @@ function renderTournaments() {
             ${t.createdByName ? `<br>👤 Организатор: ${escapeHtml(t.createdByName)}` : ''}
           </div>
         </div>
-        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:4px;" onclick="deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
+        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:4px; z-index:10;" onclick="event.stopPropagation(); deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
       </div>
     `;
   });
