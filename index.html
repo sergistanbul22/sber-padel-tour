@@ -4551,10 +4551,39 @@ async function recalculateTournament(tournamentId) {
     t.leaderboard = leaderboard;
     t.winners = winners;
 
-    // Пересчитываем RTTF рейтинги
-    const { ratingChanges, bonusChanges } = await calculateRTTF(t);
+    // 7. Откатываем старые изменения рейтинга перед пересчётом
+    if (t.ratingChanges || t.bonusChanges) {
+      const playerIdsToRollback = new Set([
+        ...Object.keys(t.ratingChanges || {}),
+        ...Object.keys(t.bonusChanges || {})
+      ]);
+      
+      for (const pid of playerIdsToRollback) {
+        const pRef = db.collection("padel_players").doc(pid);
+        const pDoc = await pRef.get();
+        if (!pDoc.exists) continue;
+        const pData = pDoc.data();
+        let newRating = pData.rating || 100;
+        
+        if (t.ratingChanges && t.ratingChanges[pid]) {
+          newRating = Math.max(1, Math.round(newRating - t.ratingChanges[pid]));
+        }
+        if (t.bonusChanges && t.bonusChanges[pid]) {
+          newRating = Math.max(1, Math.round(newRating - t.bonusChanges[pid]));
+        }
+        
+        await pRef.update({ rating: newRating });
+        
+        // Обновляем локальный массив
+        const localPlayer = players.find(p => p.id === pid);
+        if (localPlayer) localPlayer.rating = newRating;
+      }
+    }
+
+    // 8. Пересчитываем RTTF рейтинги (без увеличения tournamentsPlayed)
+    const { ratingChanges, bonusChanges } = await calculateRTTF(t, { skipTournamentsIncrement: true });
     
-    // Сохраняем изменения рейтингов для возможности отката
+    // 9. Сохраняем новые изменения рейтингов для возможности отката
     await db.collection("padel_tournaments").doc(tournamentId).update({
       ratingChanges: ratingChanges,
       bonusChanges: bonusChanges,
@@ -4597,7 +4626,8 @@ function getDscore(diff, scoringSystem) {
   }
 }
 
-async function calculateRTTF(tournament) {
+async function calculateRTTF(tournament, options = {}) {
+  const { skipTournamentsIncrement = false } = options;
   if (!tournament || !tournament.schedule || !tournament.scores) return { ratingChanges: {}, bonusChanges: {} };
 
   const isRoundRobin = tournament.type === 'roundrobin';
@@ -4676,12 +4706,16 @@ async function calculateRTTF(tournament) {
     const currentRating = p.rating || 100;
     const change = ratingChanges[pid] || 0;
     const newRating = Math.max(1, Math.round(currentRating + change));
-    const newTournamentsPlayed = (p.tournamentsPlayed || 0) + 1;
+    const newTournamentsPlayed = skipTournamentsIncrement 
+      ? (p.tournamentsPlayed || 0) 
+      : (p.tournamentsPlayed || 0) + 1;
 
-    batch.update(db.collection("padel_players").doc(pid), {
-      rating: newRating,
-      tournamentsPlayed: newTournamentsPlayed
-    });
+    const updateData = { rating: newRating };
+    if (!skipTournamentsIncrement) {
+      updateData.tournamentsPlayed = newTournamentsPlayed;
+    }
+
+    batch.update(db.collection("padel_players").doc(pid), updateData);
   }
   await batch.commit();
 
