@@ -2685,9 +2685,8 @@ function showSection(section) {
     renderProfile();
   }
   if (section === 'trainings') {
-    if (trainings.length === 0) fetchTrainings();
+    fetchTrainings(); // Always fetch fresh data
     if (trainingLocations.length === 0) fetchTrainingMeta();
-    renderTrainings();
   }
   if (section === 'admin' && isAdmin) {
     renderPlayerSelect();
