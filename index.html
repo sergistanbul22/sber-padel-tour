@@ -4348,13 +4348,15 @@ async function finalizeTournament(tournamentId) {
 
     // Calculate RTTF ratings
     t.leaderboard = leaderboard;
-    await calculateRTTF(t);
+    const { ratingChanges, bonusChanges } = await calculateRTTF(t);
 
     // Update tournament
     const updateData = {
       status: 'finished',
       leaderboard: leaderboard,
       winners: winners,
+      ratingChanges: ratingChanges,
+      bonusChanges: bonusChanges,
       finishedAt: firebase.firestore.FieldValue.serverTimestamp()
     };
     if (pairLeaderboard.length > 0) {
@@ -4530,7 +4532,14 @@ async function recalculateTournament(tournamentId) {
     t.winners = winners;
 
     // Пересчитываем RTTF рейтинги
-    await calculateRTTF(t);
+    const { ratingChanges, bonusChanges } = await calculateRTTF(t);
+    
+    // Сохраняем изменения рейтингов для возможности отката
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      ratingChanges: ratingChanges,
+      bonusChanges: bonusChanges,
+      recalculatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
 
     showToast("Итоги пересчитаны!", "success");
     openTournament(tournamentId);
@@ -4569,7 +4578,7 @@ function getDscore(diff, scoringSystem) {
 }
 
 async function calculateRTTF(tournament) {
-  if (!tournament || !tournament.schedule || !tournament.scores) return;
+  if (!tournament || !tournament.schedule || !tournament.scores) return { ratingChanges: {}, bonusChanges: {} };
 
   const isRoundRobin = tournament.type === 'roundrobin';
   const scoringSystem = tournament.scoringSystem || 'points';
@@ -4595,7 +4604,7 @@ async function calculateRTTF(tournament) {
     round.forEach((match, mIdx) => {
       const s0 = tournament.scores[`${rIdx}_${mIdx}_0`] || 0;
       const s1 = tournament.scores[`${rIdx}_${mIdx}_1`] || 0;
-      if (s0 === s1) return; // Draw not applicable in padel
+      if (s0 === s1) return;
 
       let winnerIds, loserIds, winnerScore, loserScore;
       if (s0 > s1) {
@@ -4613,19 +4622,14 @@ async function calculateRTTF(tournament) {
       const diff = Math.abs(winnerScore - loserScore);
       const D = getDscore(diff, scoringSystem);
 
-      // Each player in team gets/lose individual points
       winnerIds.forEach(idx => {
         const pid = isRoundRobin ? idx : tournament.playerIds[idx];
         const loserRating = loserIds.reduce((sum, li) => sum + (playerRatings[isRoundRobin ? li : tournament.playerIds[li]] || 100), 0) / loserIds.length;
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - loserRating);
-
-        // Newbie rules: D=1, k=1 on win, k=0.5 on loss
         const isNewbie = (playerTournaments[pid] || 0) <= 5;
         const actualK = isNewbie ? 1 : k;
         const actualD = isNewbie ? 1 : D;
-
-        if (ratingDiff >= 100 && !isNewbie) return; // Protection from farming
-
+        if (ratingDiff >= 100 && !isNewbie) return;
         const delta = ((100 - ratingDiff) / 10) * actualK * actualD;
         ratingChanges[pid] = (ratingChanges[pid] || 0) + delta;
       });
@@ -4634,25 +4638,21 @@ async function calculateRTTF(tournament) {
         const pid = isRoundRobin ? idx : tournament.playerIds[idx];
         const winnerRating = winnerIds.reduce((sum, wi) => sum + (playerRatings[isRoundRobin ? wi : tournament.playerIds[wi]] || 100), 0) / winnerIds.length;
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - winnerRating);
-
         const isNewbie = (playerTournaments[pid] || 0) <= 5;
         const actualK = isNewbie ? 0.5 : k;
         const actualD = isNewbie ? 1 : D;
-
         if (ratingDiff >= 100 && !isNewbie) return;
-
         const delta = ((100 - ratingDiff) / 10) * actualK * actualD;
         ratingChanges[pid] = (ratingChanges[pid] || 0) - delta;
       });
     });
   });
 
-  // Apply changes
+  // Apply rating changes
   const batch = db.batch();
   for (const pid of tournament.playerIds) {
     const p = players.find(pl => pl.id === pid);
     if (!p) continue;
-
     const currentRating = p.rating || 100;
     const change = ratingChanges[pid] || 0;
     const newRating = Math.max(1, Math.round(currentRating + change));
@@ -4663,10 +4663,10 @@ async function calculateRTTF(tournament) {
       tournamentsPlayed: newTournamentsPlayed
     });
   }
-
   await batch.commit();
 
   // Bonuses for top 3 if 16+ players
+  const bonusChanges = {};
   if (tournament.playerIds.length >= 16 && tournament.leaderboard) {
     const avgTop12 = tournament.playerIds
       .map(pid => playerRatings[pid])
@@ -4680,8 +4680,7 @@ async function calculateRTTF(tournament) {
       if (!p) continue;
       const pRating = playerRatings[pid] || 100;
       const diff = pRating - avgTop12;
-
-      if (diff > 200) continue; // Too strong, no bonus
+      if (diff > 200) continue;
 
       let bonusPercent = 0;
       if (i === 0) bonusPercent = 2.5;
@@ -4689,6 +4688,7 @@ async function calculateRTTF(tournament) {
       else bonusPercent = 0.5;
 
       const bonus = Math.round(pRating * (bonusPercent / 100));
+      bonusChanges[pid] = bonus;
       const newRating = Math.max(1, (p.rating || 100) + bonus);
 
       await db.collection("padel_players").doc(pid).update({
@@ -4696,6 +4696,8 @@ async function calculateRTTF(tournament) {
       });
     }
   }
+
+  return { ratingChanges, bonusChanges };
 }
 
 async function deleteTournament(tournamentId) {
@@ -4707,41 +4709,69 @@ async function deleteTournament(tournamentId) {
   if (!confirm("Удалить турнир? Это действие нельзя отменить.")) return;
 
   try {
-    // Find tournament data before deletion
     const t = tournaments.find(x => x.id === tournamentId);
+    if (!t) return;
 
-    // First update players (before deleting tournament)
-    if (t && t.playerIds) {
+    // Если турнир был завершён — откатываем все изменения
+    if (t.status === 'finished') {
+      for (const pid of t.playerIds) {
+        const pRef = db.collection("padel_players").doc(pid);
+        const pDoc = await pRef.get();
+        if (!pDoc.exists) continue;
+        
+        const pData = pDoc.data();
+        const updates = {};
+
+        // 1. Откат рейтинга (ratingChanges)
+        if (t.ratingChanges && t.ratingChanges[pid]) {
+          const change = t.ratingChanges[pid];
+          updates.rating = Math.max(1, Math.round((pData.rating || 100) - change));
+        }
+
+        // 2. Откат бонуса (bonusChanges)
+        if (t.bonusChanges && t.bonusChanges[pid]) {
+          const bonus = t.bonusChanges[pid];
+          updates.rating = Math.max(1, Math.round((updates.rating || pData.rating || 100) - bonus));
+        }
+
+        // 3. Откат медалей
+        if (t.leaderboard) {
+          const top3 = t.leaderboard.slice(0, 3);
+          for (let i = 0; i < top3.length; i++) {
+            if (top3[i].playerId === pid) {
+              const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+              updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+            }
+          }
+        }
+
+        // 4. Откат счётчиков
+        updates.tournamentsPlayed = Math.max(0, (pData.tournamentsPlayed || 0) - 1);
+        updates.tournamentCount = Math.max(0, (pData.tournamentCount || 0) - 1);
+
+        await pRef.update(updates);
+      }
+    } else {
+      // Если турнир не завершён — просто откатываем tournamentCount
       for (const pid of t.playerIds) {
         const pRef = db.collection("padel_players").doc(pid);
         const pDoc = await pRef.get();
         if (pDoc.exists) {
           const pData = pDoc.data();
-          let updates = {
+          await pRef.update({
             tournamentCount: Math.max(0, (pData.tournamentCount || 0) - 1)
-          };
-
-          // If tournament was finished, remove medals from top 3
-          if (t.status === 'finished' && t.leaderboard) {
-            const top3 = t.leaderboard.slice(0, 3);
-            for (let i = 0; i < top3.length; i++) {
-              if (top3[i].playerId === pid) {
-                const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-                updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
-              }
-            }
-          }
-
-          await pRef.update(updates);
+          });
         }
       }
     }
 
-    // Now delete tournament
+    // Уменьшаем общий счётчик турниров
     await updateCounter('totalTournaments', -1);
+    
+    // Удаляем турнир
     await db.collection("padel_tournaments").doc(tournamentId).delete();
 
-    showToast("Турнир удален", "success");
+    showToast("Турнир удалён", "success");
     closeModal();
     await loadTournaments();
     await loadPlayers();
