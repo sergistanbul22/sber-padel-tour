@@ -51,6 +51,37 @@
     overflow-x: hidden;
   }
 
+  /* Pull to Refresh */
+  .ptr-indicator {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    background: var(--bg-primary);
+  }
+  .ptr-indicator.visible {
+    opacity: 1;
+  }
+  .ptr-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: ptr-spin 0.8s linear infinite;
+  }
+  @keyframes ptr-spin {
+    to { transform: rotate(360deg); }
+  }
+
   /* Header */
   .header {
     background: rgba(10,10,10,0.95);
@@ -1358,6 +1389,11 @@
 </head>
 <body>
 
+<!-- Pull to Refresh Indicator -->
+<div class="ptr-indicator" id="ptrIndicator">
+  <div class="ptr-spinner"></div>
+</div>
+
 <!-- Header -->
 <header class="header">
   <div class="header-inner">
@@ -2044,6 +2080,9 @@ function init() {
 
     // iOS install banner
     checkIosInstallBanner();
+
+    // Setup pull-to-refresh for mobile
+    setupPullToRefresh();
   } catch (e) {
     console.error("Firebase init error:", e);
     showToast("Ошибка инициализации Firebase. Проверьте конфигурацию.", "error");
@@ -5528,6 +5567,7 @@ async function createGame() {
     showToast("Игра создана", "success");
     // Refresh games list and stats
     fetchGames();
+    fetchPlayers(); // refresh players with updated gamesPlayed
     fetchCounters();
     updateStats();
     // Открываем игру для внесения результата
@@ -5908,6 +5948,7 @@ async function finishGame(gameId) {
       saveToCache('games', games);
     }
     renderGames();
+    fetchPlayers(); // refresh players with updated ratings
     fetchCounters();
     updateStats();
   } catch (e) {
@@ -5967,6 +6008,7 @@ async function deleteGame(gameId) {
     games = games.filter(x => x.id !== gameId);
     saveToCache('games', games);
     renderGames();
+    fetchPlayers(); // refresh players with updated gamesPlayed
     fetchCounters();
     updateStats();
     showToast("Игра удалена", "success");
@@ -6839,6 +6881,70 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// ============================================
+// PULL TO REFRESH
+// ============================================
+function setupPullToRefresh() {
+  let startY = 0;
+  let currentY = 0;
+  let isPulling = false;
+  const indicator = document.getElementById('ptrIndicator');
+  const threshold = 80; // pixels to trigger refresh
+
+  document.addEventListener('touchstart', function(e) {
+    if (window.scrollY <= 0) {
+      startY = e.touches[0].clientY;
+      isPulling = true;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (!isPulling) return;
+    currentY = e.touches[0].clientY;
+    const diff = currentY - startY;
+
+    if (diff > 0 && window.scrollY <= 0) {
+      indicator.classList.add('visible');
+      if (diff > threshold) {
+        indicator.style.opacity = '1';
+      } else {
+        indicator.style.opacity = (diff / threshold).toString();
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function() {
+    if (!isPulling) return;
+    const diff = currentY - startY;
+
+    indicator.classList.remove('visible');
+    indicator.style.opacity = '0';
+    isPulling = false;
+
+    if (diff > threshold && window.scrollY <= 0) {
+      showToast('Обновление...', 'info');
+      // Refresh current section data
+      const activeSection = document.querySelector('.section.active');
+      if (activeSection) {
+        const sectionId = activeSection.id.replace('section-', '');
+        if (sectionId === 'trainings') fetchTrainings();
+        else if (sectionId === 'games') fetchGames();
+        else if (sectionId === 'players') fetchPlayers();
+        else if (sectionId === 'tournaments') fetchTournaments();
+        else if (sectionId === 'home') {
+          fetchPlayers();
+          fetchTournaments();
+          fetchGames();
+          fetchCounters();
+        }
+      }
+    }
+
+    startY = 0;
+    currentY = 0;
+  }, { passive: true });
 }
 
 // ============================================
