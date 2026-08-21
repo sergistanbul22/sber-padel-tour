@@ -2085,6 +2085,9 @@ function init() {
 
     // Setup pull-to-refresh for mobile
     setupPullToRefresh();
+    
+    // Restore section from URL hash after everything loads
+    setTimeout(restoreSectionFromHash, 1000);
   } catch (e) {
     console.error("Firebase init error:", e);
     showToast("Ошибка инициализации Firebase. Проверьте конфигурацию.", "error");
@@ -2192,6 +2195,8 @@ function handleAuthStateChanged(user) {
         loadUsers();
         subscribeToUsersList();
       }
+      // Restore section from hash after auth is ready
+      restoreSectionFromHash();
     });
   } else {
     userRole = 'player';
@@ -2202,7 +2207,11 @@ function handleAuthStateChanged(user) {
     updateUI();
     renderGames();
     renderPlayers();
-    showSection('home');
+    // Restore section from hash if present, otherwise show home
+    restoreSectionFromHash();
+    if (!window.location.hash || !window.location.hash.startsWith('#section=')) {
+      showSection('home');
+    }
   }
 }
 
@@ -2758,6 +2767,17 @@ function showSection(section) {
   if (section === 'admin' && isAdmin) {
     renderPlayerSelect();
     loadUsers();
+  }
+
+  // Update URL hash for section persistence on refresh
+  if (section === 'home') {
+    // Clear section hash, keep query params and other hashes
+    const hash = window.location.hash;
+    if (hash.startsWith('#section=')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  } else {
+    window.location.hash = 'section=' + section;
   }
 
   window.scrollTo(0, 0);
@@ -5430,6 +5450,20 @@ function checkUrlHash() {
     tryOpenTrainingModal(trainingId, 0);
   } else {
     console.log('[DEEP-LINK] No training param found');
+    // Restore section from hash if present
+    restoreSectionFromHash();
+  }
+}
+
+function restoreSectionFromHash() {
+  const hash = window.location.hash;
+  if (hash && hash.startsWith('#section=')) {
+    const section = hash.replace('#section=', '').split('&')[0];
+    const validSections = ['home', 'games', 'players', 'tournaments', 'trainings', 'profile', 'admin'];
+    if (validSections.includes(section)) {
+      console.log('[SECTION] Restoring section from hash:', section);
+      showSection(section);
+    }
   }
 }
 
