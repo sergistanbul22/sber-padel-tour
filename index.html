@@ -1996,6 +1996,7 @@ let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
 let unsubscribeTournaments = null;
 let unsubscribeTrainings = null;
+let unsubscribePlayers = null;
 
 // ============================================
 // CACHE
@@ -2052,7 +2053,7 @@ function init() {
     updateStats();
 
     // Fetch fresh data for home page (players + limited tournaments/games)
-    fetchPlayers();
+    subscribeToPlayers();
     fetchTournaments();
     subscribeToTournaments();
     subscribeToTrainings();
@@ -2188,6 +2189,10 @@ function handleAuthStateChanged(user) {
   if (unsubscribeTrainings) {
     unsubscribeTrainings();
     unsubscribeTrainings = null;
+  }
+  if (unsubscribePlayers) {
+    unsubscribePlayers();
+    unsubscribePlayers = null;
   }
 
   if (user) {
@@ -2391,6 +2396,22 @@ function subscribeToTrainings() {
       renderTrainings();
     }, err => {
       console.error("Trainings subscription error:", err);
+    });
+}
+
+function subscribeToPlayers() {
+  if (unsubscribePlayers) return;
+  
+  unsubscribePlayers = db.collection("padel_players")
+    .orderBy("createdAt", "desc")
+    .onSnapshot(snapshot => {
+      players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('players', players);
+      renderPlayers();
+      updateStats();
+      renderPlayerSelect();
+    }, err => {
+      console.error("Players subscription error:", err);
     });
 }
 
@@ -2770,7 +2791,7 @@ function showSection(section) {
     renderGames();
   }
   if (section === 'players') {
-    if (players.length === 0) fetchPlayers();
+    // Players are kept up-to-date via onSnapshot subscription
     renderPlayers();
   }
   if (section === 'tournaments') {
@@ -5714,7 +5735,6 @@ async function createGame() {
     showToast("Игра создана", "success");
     // Refresh games list and stats
     fetchGames();
-    fetchPlayers(); // refresh players with updated gamesPlayed
     fetchCounters();
     updateStats();
     // Открываем игру для внесения результата
@@ -6095,7 +6115,6 @@ async function finishGame(gameId) {
       saveToCache('games', games);
     }
     renderGames();
-    fetchPlayers(); // refresh players with updated ratings
     fetchCounters();
     updateStats();
   } catch (e) {
@@ -6155,7 +6174,6 @@ async function deleteGame(gameId) {
     games = games.filter(x => x.id !== gameId);
     saveToCache('games', games);
     renderGames();
-    fetchPlayers(); // refresh players with updated gamesPlayed
     fetchCounters();
     updateStats();
     showToast("Игра удалена", "success");
@@ -7080,11 +7098,12 @@ function setupPullToRefresh() {
           // Trainings use real-time onSnapshot - no manual fetch needed
           showToast('Тренировки обновляются автоматически', 'success');
         }
-        else if (sectionId === 'games') fetchGames();
-        else if (sectionId === 'players') fetchPlayers();
+        else if (sectionId === 'players') {
+          // Players use real-time onSnapshot - no manual fetch needed
+          showToast('Игроки обновляются автоматически', 'success');
+        }
         else if (sectionId === 'tournaments') fetchTournaments();
         else if (sectionId === 'home') {
-          fetchPlayers();
           fetchTournaments();
           fetchGames();
           fetchCounters();
