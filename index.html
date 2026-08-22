@@ -2050,6 +2050,11 @@ function init() {
     trainingCoaches = loadFromCache('trainingCoaches') || [];
     trainingGroups = loadFromCache('trainingGroups') || [];
 
+    // Initialize totals from cached data for immediate display
+    totalPlayers = players.length;
+    totalTournaments = tournaments.length;
+    totalGames = games.length;
+
     // Show stats immediately from cache
     updateStats();
 
@@ -2060,6 +2065,9 @@ function init() {
     subscribeToTrainings();
     subscribeToGamesCount();
     fetchGames();
+    
+    // Fetch counters as fallback for initial load (subscriptions will update in real-time)
+    fetchCounters();
 
     // Trainings: load only if deep-link or user opens trainings section
     const params = new URLSearchParams(window.location.search);
