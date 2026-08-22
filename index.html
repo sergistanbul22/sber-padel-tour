@@ -1997,7 +1997,6 @@ let unsubscribeUsersList = null;
 let unsubscribeTournaments = null;
 let unsubscribeTrainings = null;
 let unsubscribePlayers = null;
-let unsubscribeGamesCount = null;
 
 // ============================================
 // CACHE
@@ -2053,7 +2052,7 @@ function init() {
     // Initialize totals from cached data for immediate display
     totalPlayers = players.length;
     totalTournaments = tournaments.length;
-    totalGames = games.length;
+    // Note: totalGames comes from fetchCounters (settings doc), not games.length which is paginated
 
     // Show stats immediately from cache
     updateStats();
@@ -2063,10 +2062,9 @@ function init() {
     fetchTournaments();
     subscribeToTournaments();
     subscribeToTrainings();
-    subscribeToGamesCount();
     fetchGames();
     
-    // Fetch counters as fallback for initial load (subscriptions will update in real-time)
+    // Fetch total counts for accurate stats (games count from counters, not paginated games.length)
     fetchCounters();
 
     // Trainings: load only if deep-link or user opens trainings section
@@ -2138,10 +2136,11 @@ function fetchCounters() {
     .then(doc => {
       if (doc.exists) {
         const data = doc.data();
-        // Only update if values are still 0 (cache was empty)
+        // totalGames comes from counters (accurate count, not paginated)
+        totalGames = data.totalGames || 0;
+        // Fallback for players/tournaments if subscriptions haven't fired yet
         if (totalPlayers === 0) totalPlayers = data.totalPlayers || 0;
         if (totalTournaments === 0) totalTournaments = data.totalTournaments || 0;
-        if (totalGames === 0) totalGames = data.totalGames || 0;
         updateStats();
       }
     })
@@ -2201,10 +2200,6 @@ function handleAuthStateChanged(user) {
   if (unsubscribePlayers) {
     unsubscribePlayers();
     unsubscribePlayers = null;
-  }
-  if (unsubscribeGamesCount) {
-    unsubscribeGamesCount();
-    unsubscribeGamesCount = null;
   }
 
   if (user) {
@@ -2426,18 +2421,6 @@ function subscribeToPlayers() {
       renderPlayerSelect();
     }, err => {
       console.error("Players subscription error:", err);
-    });
-}
-
-function subscribeToGamesCount() {
-  if (unsubscribeGamesCount) return;
-  
-  unsubscribeGamesCount = db.collection("padel_games")
-    .onSnapshot(snapshot => {
-      totalGames = snapshot.size;
-      updateStats();
-    }, err => {
-      console.error("Games count subscription error:", err);
     });
 }
 
@@ -5761,6 +5744,7 @@ async function createGame() {
     showToast("Игра создана", "success");
     // Refresh games list and stats
     fetchGames();
+    fetchCounters();
     updateStats();
     // Открываем игру для внесения результата
     setTimeout(() => openGame(docRef.id), 300);
@@ -6140,6 +6124,7 @@ async function finishGame(gameId) {
       saveToCache('games', games);
     }
     renderGames();
+    fetchCounters();
     updateStats();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -6198,6 +6183,7 @@ async function deleteGame(gameId) {
     games = games.filter(x => x.id !== gameId);
     saveToCache('games', games);
     renderGames();
+    fetchCounters();
     updateStats();
     showToast("Игра удалена", "success");
   } catch (e) {
@@ -7129,6 +7115,7 @@ function setupPullToRefresh() {
         else if (sectionId === 'home') {
           fetchTournaments();
           fetchGames();
+          fetchCounters();
         }
       }
     }
