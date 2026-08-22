@@ -1997,6 +1997,7 @@ let unsubscribeUsersList = null;
 let unsubscribeTournaments = null;
 let unsubscribeTrainings = null;
 let unsubscribePlayers = null;
+let unsubscribeGamesCount = null;
 
 // ============================================
 // CACHE
@@ -2057,10 +2058,8 @@ function init() {
     fetchTournaments();
     subscribeToTournaments();
     subscribeToTrainings();
+    subscribeToGamesCount();
     fetchGames();
-    
-    // Fetch total counts for accurate stats (not limited by pagination)
-    fetchCounters();
 
     // Trainings: load only if deep-link or user opens trainings section
     const params = new URLSearchParams(window.location.search);
@@ -2193,6 +2192,10 @@ function handleAuthStateChanged(user) {
   if (unsubscribePlayers) {
     unsubscribePlayers();
     unsubscribePlayers = null;
+  }
+  if (unsubscribeGamesCount) {
+    unsubscribeGamesCount();
+    unsubscribeGamesCount = null;
   }
 
   if (user) {
@@ -2377,6 +2380,7 @@ function subscribeToTournaments() {
         }
         return { id: d.id, ...data };
       });
+      totalTournaments = tournaments.length;
       saveToCache('tournaments', tournaments);
       renderTournaments();
       updateStats();
@@ -2406,12 +2410,25 @@ function subscribeToPlayers() {
     .orderBy("createdAt", "desc")
     .onSnapshot(snapshot => {
       players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      totalPlayers = players.length;
       saveToCache('players', players);
       renderPlayers();
       updateStats();
       renderPlayerSelect();
     }, err => {
       console.error("Players subscription error:", err);
+    });
+}
+
+function subscribeToGamesCount() {
+  if (unsubscribeGamesCount) return;
+  
+  unsubscribeGamesCount = db.collection("padel_games")
+    .onSnapshot(snapshot => {
+      totalGames = snapshot.size;
+      updateStats();
+    }, err => {
+      console.error("Games count subscription error:", err);
     });
 }
 
@@ -5735,7 +5752,6 @@ async function createGame() {
     showToast("Игра создана", "success");
     // Refresh games list and stats
     fetchGames();
-    fetchCounters();
     updateStats();
     // Открываем игру для внесения результата
     setTimeout(() => openGame(docRef.id), 300);
@@ -6115,7 +6131,6 @@ async function finishGame(gameId) {
       saveToCache('games', games);
     }
     renderGames();
-    fetchCounters();
     updateStats();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -6174,7 +6189,6 @@ async function deleteGame(gameId) {
     games = games.filter(x => x.id !== gameId);
     saveToCache('games', games);
     renderGames();
-    fetchCounters();
     updateStats();
     showToast("Игра удалена", "success");
   } catch (e) {
@@ -7106,7 +7120,6 @@ function setupPullToRefresh() {
         else if (sectionId === 'home') {
           fetchTournaments();
           fetchGames();
-          fetchCounters();
         }
       }
     }
