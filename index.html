@@ -2138,9 +2138,10 @@ function fetchCounters() {
     .then(doc => {
       if (doc.exists) {
         const data = doc.data();
-        totalPlayers = data.totalPlayers || 0;
-        totalTournaments = data.totalTournaments || 0;
-        totalGames = data.totalGames || 0;
+        // Only update if values are still 0 (cache was empty)
+        if (totalPlayers === 0) totalPlayers = data.totalPlayers || 0;
+        if (totalTournaments === 0) totalTournaments = data.totalTournaments || 0;
+        if (totalGames === 0) totalGames = data.totalGames || 0;
         updateStats();
       }
     })
