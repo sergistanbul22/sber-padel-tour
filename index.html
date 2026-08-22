@@ -2781,7 +2781,8 @@ function showSection(section) {
     renderProfile();
   }
   if (section === 'trainings') {
-    fetchTrainings(); // Always fetch fresh data
+    // Trainings are kept up-to-date via onSnapshot subscription
+    renderTrainings();
     if (trainingLocations.length === 0) fetchTrainingMeta();
   }
   if (section === 'admin' && isAdmin) {
@@ -7075,7 +7076,10 @@ function setupPullToRefresh() {
       const activeSection = document.querySelector('.section.active');
       if (activeSection) {
         const sectionId = activeSection.id.replace('section-', '');
-        if (sectionId === 'trainings') fetchTrainings();
+        if (sectionId === 'trainings') {
+          // Trainings use real-time onSnapshot - no manual fetch needed
+          showToast('Тренировки обновляются автоматически', 'success');
+        }
         else if (sectionId === 'games') fetchGames();
         else if (sectionId === 'players') fetchPlayers();
         else if (sectionId === 'tournaments') fetchTournaments();
