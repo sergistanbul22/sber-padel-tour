@@ -1995,6 +1995,7 @@ let rrPairs = []; // Round Robin pairs: array of {id, playerIds: [p1, p2], name}
 let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
 let unsubscribeTournaments = null;
+let unsubscribeTrainings = null;
 
 // ============================================
 // CACHE
@@ -2054,6 +2055,7 @@ function init() {
     fetchPlayers();
     fetchTournaments();
     subscribeToTournaments();
+    subscribeToTrainings();
     fetchGames();
     
     // Fetch total counts for accurate stats (not limited by pagination)
@@ -2182,6 +2184,10 @@ function handleAuthStateChanged(user) {
   if (unsubscribeTournaments) {
     unsubscribeTournaments();
     unsubscribeTournaments = null;
+  }
+  if (unsubscribeTrainings) {
+    unsubscribeTrainings();
+    unsubscribeTrainings = null;
   }
 
   if (user) {
@@ -2354,7 +2360,7 @@ function subscribeToUsersList() {
 
 // Подписка на турниры в реальном времени
 function subscribeToTournaments() {
-  if (unsubscribeTournaments) return; // уже подписаны
+  if (unsubscribeTournaments) return;
   
   unsubscribeTournaments = db.collection("padel_tournaments")
     .orderBy("createdAt", "desc")
@@ -2371,6 +2377,20 @@ function subscribeToTournaments() {
       updateStats();
     }, err => {
       console.error("Tournaments subscription error:", err);
+    });
+}
+
+function subscribeToTrainings() {
+  if (unsubscribeTrainings) return;
+  
+  unsubscribeTrainings = db.collection("padel_trainings")
+    .orderBy("createdAt", "desc")
+    .onSnapshot(snapshot => {
+      trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveToCache('trainings', trainings);
+      renderTrainings();
+    }, err => {
+      console.error("Trainings subscription error:", err);
     });
 }
 
