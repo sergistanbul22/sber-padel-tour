@@ -51,37 +51,6 @@
     overflow-x: hidden;
   }
 
-  /* Pull to Refresh */
-  .ptr-indicator {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 50px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.2s;
-    background: var(--bg-primary);
-  }
-  .ptr-indicator.visible {
-    opacity: 1;
-  }
-  .ptr-spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: ptr-spin 0.8s linear infinite;
-  }
-  @keyframes ptr-spin {
-    to { transform: rotate(360deg); }
-  }
-
   /* Header */
   .header {
     background: rgba(10,10,10,0.95);
@@ -480,11 +449,6 @@
 
   #playersTable {
     min-width: 700px;
-  }
-
-  #adminUsersTable,
-  #allUsersTable {
-    min-width: 800px;
   }
 
   .data-table th {
@@ -1161,26 +1125,6 @@
       white-space: nowrap;
     }
 
-    /* Admin tables mobile - single row, scrollable */
-    #adminUsersTable th,
-    #adminUsersTable td,
-    #allUsersTable th,
-    #allUsersTable td {
-      white-space: nowrap;
-      padding: 8px 6px;
-      font-size: 12px;
-    }
-
-    #adminUsersTable th:nth-child(3),
-    #adminUsersTable td:nth-child(3),
-    #allUsersTable th:nth-child(3),
-    #allUsersTable td:nth-child(3) {
-      font-size: 11px;
-      max-width: 140px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
     .stats-grid {
       grid-template-columns: repeat(3, 1fr);
       gap: 12px;
@@ -1388,11 +1332,6 @@
   </style>
 </head>
 <body>
-
-<!-- Pull to Refresh Indicator -->
-<div class="ptr-indicator" id="ptrIndicator">
-  <div class="ptr-spinner"></div>
-</div>
 
 <!-- Header -->
 <header class="header">
@@ -1977,12 +1916,6 @@ let authReady = false; // true after first onAuthStateChanged callback
 let players = [];
 let tournaments = [];
 let games = [];
-let totalPlayers = 0;
-let totalTournaments = 0;
-let totalGames = 0;
-let _gamesLastDoc = null;
-let _hasMoreGames = true;
-const GAMES_PAGE_SIZE = 20;
 let trainings = [];
 let trainingLocations = [];
 let trainingCoaches = [];
@@ -1994,94 +1927,33 @@ let selectedPlayersForTournament = new Set();
 let rrPairs = []; // Round Robin pairs: array of {id, playerIds: [p1, p2], name}
 let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
-let unsubscribeTournaments = null;
-let unsubscribeTrainings = null;
-let unsubscribePlayers = null;
-
-// ============================================
-// CACHE
-// ============================================
-const CACHE_PREFIX = 'spt_';
-
-function saveToCache(key, data) {
-  try {
-    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ data, timestamp: Date.now() }));
-  } catch (e) { console.warn('Cache save failed:', e); }
-}
-
-function loadFromCache(key) {
-  try {
-    const raw = localStorage.getItem(CACHE_PREFIX + key);
-    if (!raw) return null;
-    return JSON.parse(raw).data;
-  } catch (e) { return null; }
-}
 
 // ============================================
 // INIT
 // ============================================
 function init() {
   try {
-    console.log('[INIT] Starting initialization...');
     app = firebase.initializeApp(FIREBASE_CONFIG);
     auth = firebase.auth();
     db = firebase.firestore();
-    console.log('[INIT] Firebase initialized, project:', FIREBASE_CONFIG.projectId);
-
-    // Enable offline persistence for faster loads
-    db.enablePersistence({ synchronizeTabs: true })
-      .catch(err => {
-        if (err.code == 'failed-precondition') {
-          console.log('Persistence failed: multiple tabs open');
-        } else if (err.code == 'unimplemented') {
-          console.log('Persistence not available in this browser');
-        }
-      });
 
     // Set auth persistence to LOCAL (remember session across reloads)
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
       .catch(err => console.error("Auth persistence error:", err));
 
-    // Load cached data immediately for instant stats display
-    players = loadFromCache('players') || [];
-    tournaments = loadFromCache('tournaments') || [];
-    games = loadFromCache('games') || [];
-    trainings = loadFromCache('trainings') || [];
-    trainingLocations = loadFromCache('trainingLocations') || [];
-    trainingCoaches = loadFromCache('trainingCoaches') || [];
-    trainingGroups = loadFromCache('trainingGroups') || [];
-
-    // Initialize totals from cached data for immediate display
-    totalPlayers = players.length;
-    totalTournaments = tournaments.length;
-    // Note: totalGames comes from fetchCounters (settings doc), not games.length which is paginated
-
-    // Show stats immediately from cache
-    updateStats();
-
-    // Fetch fresh data for home page (players + limited tournaments/games)
+    // Подписка на данные - работает для всех, даже без авторизации
     subscribeToPlayers();
-    fetchTournaments();
     subscribeToTournaments();
+    subscribeToGames();
     subscribeToTrainings();
-    fetchGames();
-    
-    // Fetch total counts for accurate stats (games count from counters, not paginated games.length)
-    fetchCounters();
-
-    // Trainings: load only if deep-link or user opens trainings section
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('training') || (window.location.hash && window.location.hash.startsWith('#training='))) {
-      fetchTrainings();
-    }
-    fetchTrainingMeta();
+    subscribeToTrainingMeta();
 
     auth.onAuthStateChanged(handleAuthStateChanged);
 
     // Handle deep-link to specific training
     window.addEventListener('hashchange', checkUrlHash);
-    setTimeout(checkUrlHash, 500);
     setTimeout(checkUrlHash, 3000);
+    setTimeout(checkUrlHash, 8000); // Second chance for slow mobile connections
 
     // Register Service Worker for PWA
     if ('serviceWorker' in navigator) {
@@ -2092,12 +1964,6 @@ function init() {
 
     // iOS install banner
     checkIosInstallBanner();
-
-    // Setup pull-to-refresh for mobile
-    setupPullToRefresh();
-    
-    // Restore section from URL hash after everything loads
-    setTimeout(restoreSectionFromHash, 1000);
   } catch (e) {
     console.error("Firebase init error:", e);
     showToast("Ошибка инициализации Firebase. Проверьте конфигурацию.", "error");
@@ -2133,54 +1999,32 @@ function canEdit(item) {
   return creatorEmail === userEmail;
 }
 
-function fetchCounters() {
-  console.log('[COUNTERS] Fetching...');
-  db.collection("settings").doc("counters").get()
-    .then(doc => {
-      if (doc.exists) {
-        const data = doc.data();
-        console.log('[COUNTERS] Received:', data);
-        // totalGames comes from counters (accurate count, not paginated)
-        totalGames = data.totalGames || 0;
-        // Fallback for players/tournaments if subscriptions haven't fired yet
-        if (totalPlayers === 0) totalPlayers = data.totalPlayers || 0;
-        if (totalTournaments === 0) totalTournaments = data.totalTournaments || 0;
-        updateStats();
-      } else {
-        console.log('[COUNTERS] Document does not exist');
+function subscribeToPlayers() {
+  db.collection("padel_players").orderBy("createdAt", "desc").onSnapshot(snapshot => {
+    players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPlayers();
+    updateStats();
+    renderPlayerSelect();
+  }, err => {
+    console.error("Players subscription error:", err);
+  });
+}
+
+function subscribeToTournaments() {
+  db.collection("padel_tournaments").orderBy("createdAt", "desc").onSnapshot(snapshot => {
+    tournaments = snapshot.docs.map(d => {
+      const data = d.data();
+      if (data.scheduleData) {
+        try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
       }
-    })
-    .catch(err => console.error("[COUNTERS] Fetch error:", err));
-}
-
-function fetchPlayers() {
-  db.collection("padel_players").orderBy("createdAt", "desc").get()
-    .then(snapshot => {
-      players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      saveToCache('players', players);
-      renderPlayers();
-      updateStats();
-      renderPlayerSelect();
-    })
-    .catch(err => console.error("Players fetch error:", err));
-}
-
-function fetchTournaments() {
-  db.collection("padel_tournaments").orderBy("createdAt", "desc").limit(10).get()
-    .then(snapshot => {
-      tournaments = snapshot.docs.map(d => {
-        const data = d.data();
-        if (data.scheduleData) {
-          try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
-        }
-        return { id: d.id, ...data };
-      });
-      saveToCache('tournaments', tournaments);
-      renderTournaments();
-      updateStats();
-      recalcTournamentCounts();
-    })
-    .catch(err => console.error("Tournaments fetch error:", err));
+      return { id: d.id, ...data };
+    });
+    renderTournaments();
+    updateStats();
+    recalcTournamentCounts();
+  }, err => {
+    console.error("Tournaments subscription error:", err);
+  });
 }
 
 function handleAuthStateChanged(user) {
@@ -2195,18 +2039,6 @@ function handleAuthStateChanged(user) {
     unsubscribeUsersList();
     unsubscribeUsersList = null;
   }
-  if (unsubscribeTournaments) {
-    unsubscribeTournaments();
-    unsubscribeTournaments = null;
-  }
-  if (unsubscribeTrainings) {
-    unsubscribeTrainings();
-    unsubscribeTrainings = null;
-  }
-  if (unsubscribePlayers) {
-    unsubscribePlayers();
-    unsubscribePlayers = null;
-  }
 
   if (user) {
     subscribeToUserStatus(user);
@@ -2219,8 +2051,6 @@ function handleAuthStateChanged(user) {
         loadUsers();
         subscribeToUsersList();
       }
-      // Restore section from hash after auth is ready
-      restoreSectionFromHash();
     });
   } else {
     userRole = 'player';
@@ -2231,11 +2061,7 @@ function handleAuthStateChanged(user) {
     updateUI();
     renderGames();
     renderPlayers();
-    // Restore section from hash if present, otherwise show home
-    restoreSectionFromHash();
-    if (!window.location.hash || !window.location.hash.startsWith('#section=')) {
-      showSection('home');
-    }
+    showSection('home');
   }
 }
 
@@ -2374,69 +2200,6 @@ function subscribeToUsersList() {
   }, err => {
     console.error("Users list subscription error:", err);
   });
-}
-
-// Подписка на турниры в реальном времени
-function subscribeToTournaments() {
-  if (unsubscribeTournaments) return;
-  
-  unsubscribeTournaments = db.collection("padel_tournaments")
-    .orderBy("createdAt", "desc")
-    .onSnapshot(snapshot => {
-      tournaments = snapshot.docs.map(d => {
-        const data = d.data();
-        if (data.scheduleData) {
-          try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
-        }
-        return { id: d.id, ...data };
-      });
-      totalTournaments = tournaments.length;
-      console.log('[TOURNAMENTS] Subscription received', tournaments.length, 'tournaments');
-      saveToCache('tournaments', tournaments);
-      renderTournaments();
-      updateStats();
-    }, err => {
-      console.error("[TOURNAMENTS] Subscription error:", err);
-    });
-}
-
-function subscribeToTrainings() {
-  if (unsubscribeTrainings) return;
-  
-  console.log('[TRAININGS] Starting subscription...');
-  unsubscribeTrainings = db.collection("padel_trainings")
-    .orderBy("createdAt", "desc")
-    .onSnapshot(snapshot => {
-      trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      console.log('[TRAININGS] Subscription received', trainings.length, 'trainings');
-      saveToCache('trainings', trainings);
-      renderTrainings();
-    }, err => {
-      console.error("[TRAININGS] Subscription error:", err);
-      // Fallback: try fetching without orderBy if index missing
-      if (err.code === 'failed-precondition') {
-        console.log('[TRAININGS] Retrying without orderBy...');
-        fetchTrainings();
-      }
-    });
-}
-
-function subscribeToPlayers() {
-  if (unsubscribePlayers) return;
-  
-  unsubscribePlayers = db.collection("padel_players")
-    .orderBy("createdAt", "desc")
-    .onSnapshot(snapshot => {
-      players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      totalPlayers = players.length;
-      console.log('[PLAYERS] Subscription received', players.length, 'players');
-      saveToCache('players', players);
-      renderPlayers();
-      updateStats();
-      renderPlayerSelect();
-    }, err => {
-      console.error("[PLAYERS] Subscription error:", err);
-    });
 }
 
 async function checkUserStatus() {
@@ -2809,46 +2572,21 @@ function showSection(section) {
   const bottomBtn = document.querySelector(`.bottom-nav .nav-btn[data-section="${section}"]`);
   if (bottomBtn) bottomBtn.classList.add('active');
 
-  // Lazy loading: fetch data only when section is opened
   if (section === 'games') {
-    if (games.length === 0) fetchGames();
     renderGames();
   }
   if (section === 'players') {
-    // Players are kept up-to-date via onSnapshot subscription
     renderPlayers();
-  }
-  if (section === 'tournaments') {
-    fetchTournaments(); // Always fetch fresh data
-    renderTournaments();
   }
   if (section === 'profile') {
     renderProfile();
   }
   if (section === 'trainings') {
-    // Trainings: render from cache/subscription immediately, fetch as fallback
     renderTrainings();
-    // Fallback: if no trainings loaded yet, fetch them now
-    if (trainings.length === 0) {
-      console.log('[TRAININGS] No cached data, fetching...');
-      fetchTrainings();
-    }
-    if (trainingLocations.length === 0) fetchTrainingMeta();
   }
   if (section === 'admin' && isAdmin) {
     renderPlayerSelect();
-    loadUsers();
-  }
-
-  // Update URL hash for section persistence on refresh
-  if (section === 'home') {
-    // Clear section hash, keep query params and other hashes
-    const hash = window.location.hash;
-    if (hash.startsWith('#section=')) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
-  } else {
-    window.location.hash = 'section=' + section;
+    loadUsers(); // Загружаем/обновляем список пользователей
   }
 
   window.scrollTo(0, 0);
@@ -3124,8 +2862,8 @@ async function loadPlayers() {
   // Подписка уже работает через subscribeToPlayers()
 }
 
-function loadTournaments() {
-  return fetchTournaments();
+async function loadTournaments() {
+  // Подписка уже работает через subscribeToTournaments()
 }
 
 async function recalcTournamentCounts() {
@@ -3152,6 +2890,20 @@ async function recalcTournamentCounts() {
   }
 }
 
+async function recalcPlayerGames() {
+  // Count finished games (not tied to tournaments) for each player
+  const gameCounts = {};
+  games.forEach(g => {
+    if (g.status === 'finished' && !g.tournamentId) {
+      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
+      allPlayerIds.forEach(pid => {
+        gameCounts[pid] = (gameCounts[pid] || 0) + 1;
+      });
+    }
+  });
+  return gameCounts;
+}
+
 function renderPlayers() {
   const container = document.getElementById('playersList');
 
@@ -3166,12 +2918,33 @@ function renderPlayers() {
     return;
   }
 
+  // Count finished standalone games for each player dynamically
+  const gamesCount = {};
+  games.forEach(g => {
+    if (g.status === 'finished' && !g.tournamentId) {
+      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
+      allPlayerIds.forEach(pid => {
+        gamesCount[pid] = (gamesCount[pid] || 0) + 1;
+      });
+    }
+  });
+
+  // Count finished tournament participations dynamically (fallback for data consistency)
+  const tournamentCountFinished = {};
+  tournaments.forEach(t => {
+    if (t.status === 'finished' && t.playerIds) {
+      t.playerIds.forEach(pid => {
+        tournamentCountFinished[pid] = (tournamentCountFinished[pid] || 0) + 1;
+      });
+    }
+  });
+
   // Sort: players with matches/tournaments first (by rating desc), then players without any games (at bottom)
   const sorted = [...players].sort((a, b) => {
-    const aGames = (a.tournamentsPlayed || 0) + (a.gamesPlayed || 0);
-    const bGames = (b.tournamentsPlayed || 0) + (b.gamesPlayed || 0);
-    const aHasGames = aGames > 0 || (a.tournamentCount || 0) > 0;
-    const bHasGames = bGames > 0 || (b.tournamentCount || 0) > 0;
+    const aGames = (a.tournamentsPlayed || 0) + (gamesCount[a.id] || 0);
+    const bGames = (b.tournamentsPlayed || 0) + (gamesCount[b.id] || 0);
+    const aHasGames = aGames > 0 || (tournamentCountFinished[a.id] || 0) > 0;
+    const bHasGames = bGames > 0 || (tournamentCountFinished[b.id] || 0) > 0;
     // Players without games go to the bottom
     if (aHasGames && !bHasGames) return -1;
     if (!aHasGames && bHasGames) return 1;
@@ -3197,8 +2970,9 @@ function renderPlayers() {
     const medals = p.medals || { gold: 0, silver: 0, bronze: 0 };
     const medalStr = '🥇'.repeat(medals.gold) + '🥈'.repeat(medals.silver) + '🥉'.repeat(medals.bronze);
     const rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-other';
-    const hasGames = ((p.tournamentsPlayed || 0) + (p.gamesPlayed || 0)) > 0 || (p.tournamentCount || 0) > 0;
-    const totalGames = (p.tournamentsPlayed || 0) + (p.gamesPlayed || 0);
+    const finishedTournaments = tournamentCountFinished[p.id] || 0;
+    const hasGames = ((p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0)) > 0 || finishedTournaments > 0;
+    const totalGames = (p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0);
     const ratingVal = hasGames ? (p.rating || 100) : '-';
     const isNewbie = totalGames <= 5 && hasGames;
 
@@ -3208,7 +2982,7 @@ function renderPlayers() {
       <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${p.rating || 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
       <td><div class="medals">${medalStr || '<span style="color:var(--text-muted)">-</span>'}</div></td>
       <td>${p.tournamentCount || 0}</td>
-      <td>${p.gamesPlayed || 0}</td>
+      <td>${gamesCount[p.id] || 0}</td>
       <td>${isSuperAdmin ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); deletePlayer('${p.id}')">🗑️</button>` : ''}</td>
     </tr>`;
   });
@@ -3233,11 +3007,8 @@ async function addNewPlayer() {
       tournamentCount: 0,
       rating: 100,
       tournamentsPlayed: 0,
-      gamesPlayed: 0,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-
-    await updateCounter('totalPlayers', 1);
 
     showToast(`Игрок "${name}" добавлен`, "success");
     input.value = '';
@@ -3257,7 +3028,6 @@ async function deletePlayer(playerId) {
   if (!confirm('Удалить игрока? Это действие нельзя отменить.')) return;
   try {
     await db.collection("padel_players").doc(playerId).delete();
-    await updateCounter('totalPlayers', -1);
     showToast("Игрок удален", "success");
     await loadPlayers();
     renderPlayerSelect();
@@ -3313,8 +3083,8 @@ async function savePlayerRating() {
 // ============================================
 // TOURNAMENTS
 // ============================================
-function loadTournaments() {
-  return fetchTournaments();
+async function loadTournaments() {
+  // Подписка уже работает через subscribeToTournaments()
 }
 
 function renderTournaments() {
@@ -3349,7 +3119,7 @@ function renderTournaments() {
             ${t.createdByName ? `<br>👤 Организатор: ${escapeHtml(t.createdByName)}` : ''}
           </div>
         </div>
-        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:4px; z-index:10;" onclick="event.stopPropagation(); deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
+        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:4px;" onclick="deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
       </div>
     `;
   });
@@ -3580,31 +3350,14 @@ function onTournamentTypeChange() {
   const type = document.getElementById('tournamentType').value;
   const sizeGroup = document.getElementById('tournamentSize').closest('.form-group');
   const rrSizeGroup = document.getElementById('rrSizeGroup');
-  const rrCourtsGroup = document.getElementById('rrCourtsGroup');
   const pointsGroup = document.getElementById('pointsGroup');
 
   if (type === 'roundrobin') {
     sizeGroup.style.display = 'none';
     rrSizeGroup.style.display = 'block';
-    rrCourtsGroup.style.display = 'block';
-    onRrPairCountChange();
   } else {
     sizeGroup.style.display = 'block';
     rrSizeGroup.style.display = 'none';
-    rrCourtsGroup.style.display = 'none';
-  }
-}
-
-function onRrPairCountChange() {
-  const pairCount = parseInt(document.getElementById('rrPairCount').value);
-  const courtCountSelect = document.getElementById('rrCourtCount');
-  
-  if (pairCount === 8) {
-    // 8 pairs require 2 courts minimum
-    courtCountSelect.value = '2';
-    courtCountSelect.disabled = true;
-  } else {
-    courtCountSelect.disabled = false;
   }
 }
 
@@ -3822,8 +3575,7 @@ async function createTournament() {
     if (scoringSystem === 'points') {
       points = parseInt(document.getElementById('tournamentPoints').value);
     }
-    const courtCount = parseInt(document.getElementById('rrCourtCount').value);
-    schedule = generateRoundRobinSchedule(pairsData, courtCount);
+    schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
   }
 
   const btn = document.getElementById('createTournamentBtn');
@@ -3852,7 +3604,6 @@ async function createTournament() {
     }
 
     const docRef = await db.collection("padel_tournaments").add(docData);
-    await updateCounter('totalTournaments', 1);
 
     // Update player tournament counts (only if admin - skip for regular users)
     try {
@@ -3885,11 +3636,10 @@ async function createTournament() {
     closeCreateTournamentModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
-  } finally {
-    _submitting.createTournament = false;
-    btn.disabled = false;
-    btn.innerHTML = '🏆 Создать турнир';
   }
+
+  btn.disabled = false;
+  btn.innerHTML = '🏆 Создать турнир';
 }
 
 // ============================================
@@ -4439,15 +4189,13 @@ async function finalizeTournament(tournamentId) {
 
     // Calculate RTTF ratings
     t.leaderboard = leaderboard;
-    const { ratingChanges, bonusChanges } = await calculateRTTF(t);
+    await calculateRTTF(t);
 
     // Update tournament
     const updateData = {
       status: 'finished',
       leaderboard: leaderboard,
       winners: winners,
-      ratingChanges: ratingChanges,
-      bonusChanges: bonusChanges,
       finishedAt: firebase.firestore.FieldValue.serverTimestamp()
     };
     if (pairLeaderboard.length > 0) {
@@ -4622,48 +4370,11 @@ async function recalculateTournament(tournamentId) {
     t.leaderboard = leaderboard;
     t.winners = winners;
 
-    // 7. Откатываем старые изменения рейтинга перед пересчётом
-    if (t.ratingChanges || t.bonusChanges) {
-      const playerIdsToRollback = new Set([
-        ...Object.keys(t.ratingChanges || {}),
-        ...Object.keys(t.bonusChanges || {})
-      ]);
-      
-      for (const pid of playerIdsToRollback) {
-        const pRef = db.collection("padel_players").doc(pid);
-        const pDoc = await pRef.get();
-        if (!pDoc.exists) continue;
-        const pData = pDoc.data();
-        let newRating = pData.rating || 100;
-        
-        if (t.ratingChanges && t.ratingChanges[pid]) {
-          newRating = Math.max(1, Math.round(newRating - t.ratingChanges[pid]));
-        }
-        if (t.bonusChanges && t.bonusChanges[pid]) {
-          newRating = Math.max(1, Math.round(newRating - t.bonusChanges[pid]));
-        }
-        
-        await pRef.update({ rating: newRating });
-        
-        // Обновляем локальный массив
-        const localPlayer = players.find(p => p.id === pid);
-        if (localPlayer) localPlayer.rating = newRating;
-      }
-    }
-
-    // 8. Пересчитываем RTTF рейтинги (без увеличения tournamentsPlayed)
-    const { ratingChanges, bonusChanges } = await calculateRTTF(t, { skipTournamentsIncrement: true });
-    
-    // 9. Сохраняем новые изменения рейтингов для возможности отката
-    await db.collection("padel_tournaments").doc(tournamentId).update({
-      ratingChanges: ratingChanges,
-      bonusChanges: bonusChanges,
-      recalculatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    // Пересчитываем RTTF рейтинги
+    await calculateRTTF(t);
 
     showToast("Итоги пересчитаны!", "success");
     openTournament(tournamentId);
-    await loadTournaments();
     await loadPlayers();
   } catch (e) {
     showToast("Ошибка пересчёта: " + e.message, "error");
@@ -4697,9 +4408,8 @@ function getDscore(diff, scoringSystem) {
   }
 }
 
-async function calculateRTTF(tournament, options = {}) {
-  const { skipTournamentsIncrement = false } = options;
-  if (!tournament || !tournament.schedule || !tournament.scores) return { ratingChanges: {}, bonusChanges: {} };
+async function calculateRTTF(tournament) {
+  if (!tournament || !tournament.schedule || !tournament.scores) return;
 
   const isRoundRobin = tournament.type === 'roundrobin';
   const scoringSystem = tournament.scoringSystem || 'points';
@@ -4725,7 +4435,7 @@ async function calculateRTTF(tournament, options = {}) {
     round.forEach((match, mIdx) => {
       const s0 = tournament.scores[`${rIdx}_${mIdx}_0`] || 0;
       const s1 = tournament.scores[`${rIdx}_${mIdx}_1`] || 0;
-      if (s0 === s1) return;
+      if (s0 === s1) return; // Draw not applicable in padel
 
       let winnerIds, loserIds, winnerScore, loserScore;
       if (s0 > s1) {
@@ -4743,14 +4453,19 @@ async function calculateRTTF(tournament, options = {}) {
       const diff = Math.abs(winnerScore - loserScore);
       const D = getDscore(diff, scoringSystem);
 
+      // Each player in team gets/lose individual points
       winnerIds.forEach(idx => {
         const pid = isRoundRobin ? idx : tournament.playerIds[idx];
         const loserRating = loserIds.reduce((sum, li) => sum + (playerRatings[isRoundRobin ? li : tournament.playerIds[li]] || 100), 0) / loserIds.length;
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - loserRating);
+
+        // Newbie rules: D=1, k=1 on win, k=0.5 on loss
         const isNewbie = (playerTournaments[pid] || 0) <= 5;
         const actualK = isNewbie ? 1 : k;
         const actualD = isNewbie ? 1 : D;
-        if (ratingDiff >= 100 && !isNewbie) return;
+
+        if (ratingDiff >= 100 && !isNewbie) return; // Protection from farming
+
         const delta = ((100 - ratingDiff) / 10) * actualK * actualD;
         ratingChanges[pid] = (ratingChanges[pid] || 0) + delta;
       });
@@ -4759,39 +4474,39 @@ async function calculateRTTF(tournament, options = {}) {
         const pid = isRoundRobin ? idx : tournament.playerIds[idx];
         const winnerRating = winnerIds.reduce((sum, wi) => sum + (playerRatings[isRoundRobin ? wi : tournament.playerIds[wi]] || 100), 0) / winnerIds.length;
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - winnerRating);
+
         const isNewbie = (playerTournaments[pid] || 0) <= 5;
         const actualK = isNewbie ? 0.5 : k;
         const actualD = isNewbie ? 1 : D;
+
         if (ratingDiff >= 100 && !isNewbie) return;
+
         const delta = ((100 - ratingDiff) / 10) * actualK * actualD;
         ratingChanges[pid] = (ratingChanges[pid] || 0) - delta;
       });
     });
   });
 
-  // Apply rating changes
+  // Apply changes
   const batch = db.batch();
   for (const pid of tournament.playerIds) {
     const p = players.find(pl => pl.id === pid);
     if (!p) continue;
+
     const currentRating = p.rating || 100;
     const change = ratingChanges[pid] || 0;
     const newRating = Math.max(1, Math.round(currentRating + change));
-    const newTournamentsPlayed = skipTournamentsIncrement 
-      ? (p.tournamentsPlayed || 0) 
-      : (p.tournamentsPlayed || 0) + 1;
+    const newTournamentsPlayed = (p.tournamentsPlayed || 0) + 1;
 
-    const updateData = { rating: newRating };
-    if (!skipTournamentsIncrement) {
-      updateData.tournamentsPlayed = newTournamentsPlayed;
-    }
-
-    batch.update(db.collection("padel_players").doc(pid), updateData);
+    batch.update(db.collection("padel_players").doc(pid), {
+      rating: newRating,
+      tournamentsPlayed: newTournamentsPlayed
+    });
   }
+
   await batch.commit();
 
   // Bonuses for top 3 if 16+ players
-  const bonusChanges = {};
   if (tournament.playerIds.length >= 16 && tournament.leaderboard) {
     const avgTop12 = tournament.playerIds
       .map(pid => playerRatings[pid])
@@ -4805,7 +4520,8 @@ async function calculateRTTF(tournament, options = {}) {
       if (!p) continue;
       const pRating = playerRatings[pid] || 100;
       const diff = pRating - avgTop12;
-      if (diff > 200) continue;
+
+      if (diff > 200) continue; // Too strong, no bonus
 
       let bonusPercent = 0;
       if (i === 0) bonusPercent = 2.5;
@@ -4813,7 +4529,6 @@ async function calculateRTTF(tournament, options = {}) {
       else bonusPercent = 0.5;
 
       const bonus = Math.round(pRating * (bonusPercent / 100));
-      bonusChanges[pid] = bonus;
       const newRating = Math.max(1, (p.rating || 100) + bonus);
 
       await db.collection("padel_players").doc(pid).update({
@@ -4821,8 +4536,6 @@ async function calculateRTTF(tournament, options = {}) {
       });
     }
   }
-
-  return { ratingChanges, bonusChanges };
 }
 
 async function deleteTournament(tournamentId) {
@@ -4834,69 +4547,40 @@ async function deleteTournament(tournamentId) {
   if (!confirm("Удалить турнир? Это действие нельзя отменить.")) return;
 
   try {
+    // Find tournament data before deletion
     const t = tournaments.find(x => x.id === tournamentId);
-    if (!t) return;
 
-    // Если турнир был завершён — откатываем все изменения
-    if (t.status === 'finished') {
-      for (const pid of t.playerIds) {
-        const pRef = db.collection("padel_players").doc(pid);
-        const pDoc = await pRef.get();
-        if (!pDoc.exists) continue;
-        
-        const pData = pDoc.data();
-        const updates = {};
-
-        // 1. Откат рейтинга (ratingChanges)
-        if (t.ratingChanges && t.ratingChanges[pid]) {
-          const change = t.ratingChanges[pid];
-          updates.rating = Math.max(1, Math.round((pData.rating || 100) - change));
-        }
-
-        // 2. Откат бонуса (bonusChanges)
-        if (t.bonusChanges && t.bonusChanges[pid]) {
-          const bonus = t.bonusChanges[pid];
-          updates.rating = Math.max(1, Math.round((updates.rating || pData.rating || 100) - bonus));
-        }
-
-        // 3. Откат медалей
-        if (t.leaderboard) {
-          const top3 = t.leaderboard.slice(0, 3);
-          for (let i = 0; i < top3.length; i++) {
-            if (top3[i].playerId === pid) {
-              const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-              updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
-            }
-          }
-        }
-
-        // 4. Откат счётчиков
-        updates.tournamentsPlayed = Math.max(0, (pData.tournamentsPlayed || 0) - 1);
-        updates.tournamentCount = Math.max(0, (pData.tournamentCount || 0) - 1);
-
-        await pRef.update(updates);
-      }
-    } else {
-      // Если турнир не завершён — просто откатываем tournamentCount
+    // First update players (before deleting tournament)
+    if (t && t.playerIds) {
       for (const pid of t.playerIds) {
         const pRef = db.collection("padel_players").doc(pid);
         const pDoc = await pRef.get();
         if (pDoc.exists) {
           const pData = pDoc.data();
-          await pRef.update({
+          let updates = {
             tournamentCount: Math.max(0, (pData.tournamentCount || 0) - 1)
-          });
+          };
+
+          // If tournament was finished, remove medals from top 3
+          if (t.status === 'finished' && t.leaderboard) {
+            const top3 = t.leaderboard.slice(0, 3);
+            for (let i = 0; i < top3.length; i++) {
+              if (top3[i].playerId === pid) {
+                const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+                updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+              }
+            }
+          }
+
+          await pRef.update(updates);
         }
       }
     }
 
-    // Уменьшаем общий счётчик турниров
-    await updateCounter('totalTournaments', -1);
-    
-    // Удаляем турнир
+    // Now delete tournament
     await db.collection("padel_tournaments").doc(tournamentId).delete();
 
-    showToast("Турнир удалён", "success");
+    showToast("Турнир удален", "success");
     closeModal();
     await loadTournaments();
     await loadPlayers();
@@ -5304,7 +4988,7 @@ function renderUsers() {
     return nameA.localeCompare(nameB);
   });
 
-  let html = '<div class="table-scroll"><table class="data-table" id="adminUsersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<table class="data-table"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   sortedAdmins.forEach(a => {
     // Determine role display
     const role = a.role || (a.isApproved ? 'admin' : 'player');
@@ -5321,8 +5005,7 @@ function renderUsers() {
     html += `<tr>
       <td>${escapeHtml(a.lastName || '')} ${escapeHtml(a.firstName || '')}</td>
       <td>${escapeHtml(a.login || '')}</td>
-      <td>${escapeHtml(a.recoveryEmail || '—')}</td>
-      <td>${escapeHtml(a.telegram || '—')}</td>
+      <td>${escapeHtml(a.id)}</td>
       <td>${roleBadge}</td>
       <td style="text-align: right;">`;
 
@@ -5341,7 +5024,7 @@ function renderUsers() {
 
     html += `</td></tr>`;
   });
-  html += '</tbody></table></div>';
+  html += '</tbody></table>';
   container.innerHTML = html;
 }
 
@@ -5404,7 +5087,7 @@ function renderAllUsers() {
     return;
   }
 
-  let html = '<div class="table-scroll"><table class="data-table" id="allUsersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<table class="data-table"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   admins.forEach(a => {
     const role = a.role || (a.isApproved ? 'admin' : 'player');
     let roleBadge = '';
@@ -5420,8 +5103,7 @@ function renderAllUsers() {
     html += `<tr>
       <td>${escapeHtml(a.lastName || '')} ${escapeHtml(a.firstName || '')}</td>
       <td>${escapeHtml(a.login || '')}</td>
-      <td>${escapeHtml(a.recoveryEmail || '—')}</td>
-      <td>${escapeHtml(a.telegram || '—')}</td>
+      <td>${escapeHtml(a.id)}</td>
       <td>${roleBadge}</td>
       <td style="text-align: right;">`;
 
@@ -5439,7 +5121,7 @@ function renderAllUsers() {
 
     html += `</td></tr>`;
   });
-  html += '</tbody></table></div>';
+  html += '</tbody></table>';
   container.innerHTML = html;
 }
 
@@ -5447,92 +5129,65 @@ function renderAllUsers() {
 // STATS
 // ============================================
 function updateStats() {
-  document.getElementById('statPlayers').textContent = totalPlayers;
-  document.getElementById('statTournaments').textContent = totalTournaments;
-  document.getElementById('statMatches').textContent = totalGames;
+  document.getElementById('statPlayers').textContent = players.length;
+  document.getElementById('statTournaments').textContent = tournaments.length;
+
+  let totalMatches = 0;
+  // Считаем только отдельные завершённые игры (не из турниров)
+  const finishedGames = games.filter(g => g.status === 'finished' && !g.tournamentId).length;
+  totalMatches = finishedGames;
+
+  document.getElementById('statMatches').textContent = totalMatches;
 }
 
 // ============================================
 // GAMES
 // ============================================
-function fetchGames() {
-  _gamesLastDoc = null;
-  _hasMoreGames = true;
-  db.collection("padel_games").orderBy("createdAt", "desc").limit(GAMES_PAGE_SIZE).get()
-    .then(snapshot => {
-      games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      _gamesLastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-      _hasMoreGames = snapshot.docs.length === GAMES_PAGE_SIZE;
-      saveToCache('games', games);
-      renderGames();
-      renderPlayers();
-      updateStats();
-    })
-    .catch(err => console.error("Games fetch error:", err));
+function subscribeToGames() {
+  db.collection("padel_games").orderBy("createdAt", "desc").onSnapshot(snapshot => {
+    games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderGames();
+    renderPlayers(); // обновить счётчик игр в таблице игроков
+    updateStats(); // обновить счётчик матчей на главной
+  }, err => {
+    console.error("Games subscription error:", err);
+  });
 }
 
-function fetchMoreGames() {
-  if (!_hasMoreGames || !_gamesLastDoc) return;
-  
-  const btn = document.getElementById('loadMoreGamesBtn');
-  if (btn) btn.textContent = 'Загрузка...';
-  
-  db.collection("padel_games").orderBy("createdAt", "desc").startAfter(_gamesLastDoc).limit(GAMES_PAGE_SIZE).get()
-    .then(snapshot => {
-      const newGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      games = games.concat(newGames);
-      _gamesLastDoc = snapshot.docs[snapshot.docs.length - 1] || _gamesLastDoc;
-      _hasMoreGames = snapshot.docs.length === GAMES_PAGE_SIZE;
-      saveToCache('games', games);
-      renderGames();
-      renderPlayers();
-    })
-    .catch(err => {
-      console.error("Games fetch more error:", err);
-      if (btn) btn.textContent = 'Показать далее...';
-    });
+function subscribeToTrainings() {
+  db.collection("padel_trainings").onSnapshot(snapshot => {
+    trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderTrainings();
+    // Try deep-link after trainings load (for mobile/Telegram browsers)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('training')) {
+      console.log('[DEEP-LINK] Data loaded, checking query param...');
+      checkUrlHash();
+    } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
+      console.log('[DEEP-LINK] Data loaded, checking hash...');
+      checkUrlHash();
+    }
+  }, err => {
+    console.error("Trainings subscription error:", err);
+  });
 }
 
-function fetchTrainings() {
-  console.log('[TRAININGS] Fetching all trainings...');
-  db.collection("padel_trainings").get()
-    .then(snapshot => {
-      trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      console.log('[TRAININGS] Fetched', trainings.length, 'trainings');
-      saveToCache('trainings', trainings);
-      renderTrainings();
-      // Try deep-link after trainings load
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('training')) {
-        console.log('[DEEP-LINK] Data loaded, checking query param...');
-        checkUrlHash();
-      } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
-        console.log('[DEEP-LINK] Data loaded, checking hash...');
-        checkUrlHash();
-      }
-    })
-    .catch(err => console.error("Trainings fetch error:", err));
-}
-
-function fetchTrainingMeta() {
-  db.collection("settings").doc("training_meta").get()
-    .then(doc => {
-      if (doc.exists) {
-        const data = doc.data();
-        trainingLocations = data.locations || [];
-        trainingCoaches = data.coaches || [];
-        trainingGroups = data.groups || [];
-      } else {
-        trainingLocations = [];
-        trainingCoaches = [];
-        trainingGroups = [];
-      }
-      saveToCache('trainingLocations', trainingLocations);
-      saveToCache('trainingCoaches', trainingCoaches);
-      saveToCache('trainingGroups', trainingGroups);
-      populateTrainingSelects();
-    })
-    .catch(err => console.error("Training meta fetch error:", err));
+function subscribeToTrainingMeta() {
+  db.collection("settings").doc("training_meta").onSnapshot(doc => {
+    if (doc.exists) {
+      const data = doc.data();
+      trainingLocations = data.locations || [];
+      trainingCoaches = data.coaches || [];
+      trainingGroups = data.groups || [];
+    } else {
+      trainingLocations = [];
+      trainingCoaches = [];
+      trainingGroups = [];
+    }
+    populateTrainingSelects();
+  }, err => {
+    console.error("Training meta subscription error:", err);
+  });
 }
 
 function checkUrlHash() {
@@ -5557,20 +5212,6 @@ function checkUrlHash() {
     tryOpenTrainingModal(trainingId, 0);
   } else {
     console.log('[DEEP-LINK] No training param found');
-    // Restore section from hash if present
-    restoreSectionFromHash();
-  }
-}
-
-function restoreSectionFromHash() {
-  const hash = window.location.hash;
-  if (hash && hash.startsWith('#section=')) {
-    const section = hash.replace('#section=', '').split('&')[0];
-    const validSections = ['home', 'games', 'players', 'tournaments', 'trainings', 'profile', 'admin'];
-    if (validSections.includes(section)) {
-      console.log('[SECTION] Restoring section from hash:', section);
-      showSection(section);
-    }
   }
 }
 
@@ -5646,27 +5287,6 @@ function renderGames() {
   });
 
   container.innerHTML = html;
-
-  // Add "Load more" button if there are more games
-  if (_hasMoreGames) {
-    const loadMoreHtml = `
-      <div style="text-align: center; margin-top: 16px;">
-        <button id="loadMoreGamesBtn" onclick="fetchMoreGames()" style="
-          padding: 10px 24px;
-          border: 1px solid var(--accent);
-          background: transparent;
-          color: var(--accent);
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          width: 100%;
-          max-width: 300px;
-        ">Показать далее...</button>
-      </div>
-    `;
-    container.insertAdjacentHTML('beforeend', loadMoreHtml);
-  }
 }
 
 function closeCreateTournamentModal() {
@@ -5710,16 +5330,6 @@ function closeCreateGameModal() {
   document.getElementById('createGameModal').classList.remove('show');
 }
 
-async function updateCounter(field, delta) {
-  try {
-    await db.collection("settings").doc("counters").set({
-      [field]: firebase.firestore.FieldValue.increment(delta)
-    }, { merge: true });
-  } catch (e) {
-    console.error("Counter update error:", e);
-  }
-}
-
 async function createGame() {
   const date = document.getElementById('gameDate').value;
   const p11 = document.getElementById('gamePair1Player1').value;
@@ -5750,24 +5360,8 @@ async function createGame() {
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    // Increment gamesPlayed for each player and total games counter
-    const batch = db.batch();
-    [p11, p12, p21, p22].forEach(pid => {
-      batch.update(db.collection("padel_players").doc(pid), {
-        gamesPlayed: firebase.firestore.FieldValue.increment(1)
-      });
-    });
-    batch.update(db.collection("settings").doc("counters"), {
-      totalGames: firebase.firestore.FieldValue.increment(1)
-    });
-    await batch.commit();
-
     closeCreateGameModal();
     showToast("Игра создана", "success");
-    // Refresh games list and stats
-    fetchGames();
-    fetchCounters();
-    updateStats();
     // Открываем игру для внесения результата
     setTimeout(() => openGame(docRef.id), 300);
   } catch (e) {
@@ -6023,8 +5617,6 @@ async function saveGameSet(gameId) {
 
     // Обновляем локально
     g.sets = newSets;
-    saveToCache('games', games);
-    renderGames();
 
     showToast("Сет сохранён", "success");
     openGame(gameId); // Перерисовываем
@@ -6139,15 +5731,6 @@ async function finishGame(gameId) {
 
     closeGameModal();
     showToast("Игра завершена. Рейтинги обновлены.", "success");
-    // Refresh games list and stats
-    const idx = games.findIndex(x => x.id === gameId);
-    if (idx >= 0) {
-      games[idx] = { ...games[idx], status: 'finished', finishedAt: new Date().toISOString(), ratingChanges: ratingChanges || {} };
-      saveToCache('games', games);
-    }
-    renderGames();
-    fetchCounters();
-    updateStats();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -6185,28 +5768,7 @@ async function deleteGame(gameId) {
       await batch.commit();
     }
 
-    // Decrement gamesPlayed for each player and total games counter
-    if (g && !g.tournamentId) {
-      const decBatch = db.batch();
-      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
-      allPlayerIds.forEach(pid => {
-        decBatch.update(db.collection("padel_players").doc(pid), {
-          gamesPlayed: firebase.firestore.FieldValue.increment(-1)
-        });
-      });
-      decBatch.update(db.collection("settings").doc("counters"), {
-        totalGames: firebase.firestore.FieldValue.increment(-1)
-      });
-      await decBatch.commit();
-    }
-
     await db.collection("padel_games").doc(gameId).delete();
-    // Refresh local state
-    games = games.filter(x => x.id !== gameId);
-    saveToCache('games', games);
-    renderGames();
-    fetchCounters();
-    updateStats();
     showToast("Игра удалена", "success");
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -6415,8 +5977,7 @@ async function createTraining() {
   }
 
   try {
-    console.log('[TRAINING] Creating training...');
-    const docRef = await db.collection("padel_trainings").add({
+    await db.collection("padel_trainings").add({
       date,
       timeStart,
       timeEnd,
@@ -6431,11 +5992,9 @@ async function createTraining() {
       createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    console.log('[TRAINING] Created successfully, ID:', docRef.id);
     showToast("Тренировка создана", "success");
     closeCreateTrainingModal();
   } catch (e) {
-    console.error('[TRAINING] Create error:', e);
     showToast("Ошибка: " + e.message, "error");
   }
 }
@@ -6493,18 +6052,14 @@ function renderTrainings() {
     const endDateTime = new Date((t.date || '') + 'T' + (t.timeEnd || '23:59'));
     const isPast = endDateTime < now;
 
-    const applicationsCount = t.applications ? t.applications.length : 0;
-    const hasPendingApps = t.trainingType === 'closed' && applicationsCount > 0;
-
     html += `
       <div class="card" style="position: relative; padding: 16px;${isPast ? ' opacity: 0.55;' : ''}">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <div style="cursor: pointer; flex: 1; min-width: 0;" onclick="${isPast ? '' : `openTraining('${t.id}')`}">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
-              <span style="font-size: 16px; font-weight: 700; color: var(--text-primary); white-space: nowrap;">
+          <div style="cursor: pointer; flex: 1;" onclick="${isPast ? '' : `openTraining('${t.id}')`}">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
                 ${isPast ? '✓ ' : ''}📅 ${dateStr}${isPast ? ' <span style="font-size:12px;color:var(--text-muted);">(завершена)</span>' : ''}
               </span>
-              ${hasPendingApps ? `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(255,149,0,0.15); color: #FF9500; white-space: nowrap; flex-shrink: 0;">📝 ${applicationsCount} заявок</span>` : ''}
             </div>
             <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
               📍 ${escapeHtml(t.location)}${t.coach ? ' | 🎾 ' + escapeHtml(t.coach) : ''}${t.group ? ' | 👥 ' + escapeHtml(t.group) : ''}
@@ -6762,14 +6317,7 @@ async function changeTrainingPlayer(trainingId, slotIndex, newPlayerId) {
 
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
     showToast("Запись обновлена", "success");
-    // Update local cache
-    const idx = trainings.findIndex(x => x.id === trainingId);
-    if (idx >= 0) {
-      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
-      saveToCache('trainings', trainings);
-    }
-    renderTrainings(); // refresh list
-    openTraining(trainingId); // refresh detail
+    openTraining(trainingId); // refresh
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -6805,13 +6353,6 @@ async function cancelTrainingBooking(trainingId, slotIndex) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
-    // Update local cache
-    const idx = trainings.findIndex(x => x.id === trainingId);
-    if (idx >= 0) {
-      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
-      saveToCache('trainings', trainings);
-    }
-    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6875,13 +6416,6 @@ async function bookTrainingSlot(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ slots: updatedSlots });
-    // Update local cache
-    const idx = trainings.findIndex(x => x.id === trainingId);
-    if (idx >= 0) {
-      trainings[idx] = { ...trainings[idx], slots: updatedSlots };
-      saveToCache('trainings', trainings);
-    }
-    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6938,13 +6472,6 @@ async function applyForTraining(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ applications: updatedApps });
-    // Update local cache
-    const idx = trainings.findIndex(x => x.id === trainingId);
-    if (idx >= 0) {
-      trainings[idx] = { ...trainings[idx], applications: updatedApps };
-      saveToCache('trainings', trainings);
-    }
-    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -6977,13 +6504,6 @@ async function cancelTrainingApplication(trainingId) {
 
   try {
     await db.collection("padel_trainings").doc(trainingId).update({ applications: updatedApps });
-    // Update local cache
-    const idx = trainings.findIndex(x => x.id === trainingId);
-    if (idx >= 0) {
-      trainings[idx] = { ...trainings[idx], applications: updatedApps };
-      saveToCache('trainings', trainings);
-    }
-    renderTrainings(); // refresh list
   } catch (e) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
@@ -7030,22 +6550,7 @@ async function confirmTrainingApplication(trainingId, playerId) {
       applications: updatedApps
     });
     showToast("Заявка подтверждена", "success");
-    
-    // Refresh training data from Firestore before reopening
-    const doc = await db.collection("padel_trainings").doc(trainingId).get();
-    if (doc.exists) {
-      const idx = trainings.findIndex(x => x.id === trainingId);
-      const updatedTraining = { id: doc.id, ...doc.data() };
-      if (idx >= 0) {
-        trainings[idx] = updatedTraining;
-      } else {
-        trainings.push(updatedTraining);
-      }
-      saveToCache('trainings', trainings);
-    }
-    
     openTraining(trainingId); // refresh
-    renderTrainings(); // refresh list view too
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -7080,74 +6585,6 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
-}
-
-// ============================================
-// PULL TO REFRESH
-// ============================================
-function setupPullToRefresh() {
-  let startY = 0;
-  let currentY = 0;
-  let isPulling = false;
-  const indicator = document.getElementById('ptrIndicator');
-  const threshold = 80; // pixels to trigger refresh
-
-  document.addEventListener('touchstart', function(e) {
-    if (window.scrollY <= 0) {
-      startY = e.touches[0].clientY;
-      isPulling = true;
-    }
-  }, { passive: true });
-
-  document.addEventListener('touchmove', function(e) {
-    if (!isPulling) return;
-    currentY = e.touches[0].clientY;
-    const diff = currentY - startY;
-
-    if (diff > 0 && window.scrollY <= 0) {
-      indicator.classList.add('visible');
-      if (diff > threshold) {
-        indicator.style.opacity = '1';
-      } else {
-        indicator.style.opacity = (diff / threshold).toString();
-      }
-    }
-  }, { passive: true });
-
-  document.addEventListener('touchend', function() {
-    if (!isPulling) return;
-    const diff = currentY - startY;
-
-    indicator.classList.remove('visible');
-    indicator.style.opacity = '0';
-    isPulling = false;
-
-    if (diff > threshold && window.scrollY <= 0) {
-      showToast('Обновление...', 'info');
-      // Refresh current section data
-      const activeSection = document.querySelector('.section.active');
-      if (activeSection) {
-        const sectionId = activeSection.id.replace('section-', '');
-        if (sectionId === 'trainings') {
-          // Trainings use real-time onSnapshot - no manual fetch needed
-          showToast('Тренировки обновляются автоматически', 'success');
-        }
-        else if (sectionId === 'players') {
-          // Players use real-time onSnapshot - no manual fetch needed
-          showToast('Игроки обновляются автоматически', 'success');
-        }
-        else if (sectionId === 'tournaments') fetchTournaments();
-        else if (sectionId === 'home') {
-          fetchTournaments();
-          fetchGames();
-          fetchCounters();
-        }
-      }
-    }
-
-    startY = 0;
-    currentY = 0;
-  }, { passive: true });
 }
 
 // ============================================
@@ -7197,16 +6634,9 @@ init();
       </div>
       <div class="form-group" id="rrSizeGroup" style="display:none;">
         <label class="form-label">Количество пар (Round Robin)</label>
-        <select class="form-select" id="rrPairCount" onchange="onRrPairCountChange()">
-          <option value="4" selected>4 пары (8 игроков)</option>
-          <option value="8">8 пар (16 игроков)</option>
-        </select>
-      </div>
-      <div class="form-group" id="rrCourtsGroup" style="display:none;">
-        <label class="form-label">Количество кортов</label>
-        <select class="form-select" id="rrCourtCount">
-          <option value="1" selected>1 корт</option>
-          <option value="2">2 корта</option>
+        <select class="form-select" id="rrPairCount">
+          <option value="4" selected>4 пары (8 игроков, 1 корт)</option>
+          <option value="8">8 пар (16 игроков, 2 корта)</option>
         </select>
       </div>
       <div class="form-group" id="pointsGroup">
