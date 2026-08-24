@@ -2022,9 +2022,11 @@ function loadFromCache(key) {
 // ============================================
 function init() {
   try {
+    console.log('[INIT] Starting initialization...');
     app = firebase.initializeApp(FIREBASE_CONFIG);
     auth = firebase.auth();
     db = firebase.firestore();
+    console.log('[INIT] Firebase initialized, project:', FIREBASE_CONFIG.projectId);
 
     // Enable offline persistence for faster loads
     db.enablePersistence({ synchronizeTabs: true })
@@ -2132,19 +2134,23 @@ function canEdit(item) {
 }
 
 function fetchCounters() {
+  console.log('[COUNTERS] Fetching...');
   db.collection("settings").doc("counters").get()
     .then(doc => {
       if (doc.exists) {
         const data = doc.data();
+        console.log('[COUNTERS] Received:', data);
         // totalGames comes from counters (accurate count, not paginated)
         totalGames = data.totalGames || 0;
         // Fallback for players/tournaments if subscriptions haven't fired yet
         if (totalPlayers === 0) totalPlayers = data.totalPlayers || 0;
         if (totalTournaments === 0) totalTournaments = data.totalTournaments || 0;
         updateStats();
+      } else {
+        console.log('[COUNTERS] Document does not exist');
       }
     })
-    .catch(err => console.error("Counters fetch error:", err));
+    .catch(err => console.error("[COUNTERS] Fetch error:", err));
 }
 
 function fetchPlayers() {
@@ -2385,25 +2391,33 @@ function subscribeToTournaments() {
         return { id: d.id, ...data };
       });
       totalTournaments = tournaments.length;
+      console.log('[TOURNAMENTS] Subscription received', tournaments.length, 'tournaments');
       saveToCache('tournaments', tournaments);
       renderTournaments();
       updateStats();
     }, err => {
-      console.error("Tournaments subscription error:", err);
+      console.error("[TOURNAMENTS] Subscription error:", err);
     });
 }
 
 function subscribeToTrainings() {
   if (unsubscribeTrainings) return;
   
+  console.log('[TRAININGS] Starting subscription...');
   unsubscribeTrainings = db.collection("padel_trainings")
     .orderBy("createdAt", "desc")
     .onSnapshot(snapshot => {
       trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      console.log('[TRAININGS] Subscription received', trainings.length, 'trainings');
       saveToCache('trainings', trainings);
       renderTrainings();
     }, err => {
-      console.error("Trainings subscription error:", err);
+      console.error("[TRAININGS] Subscription error:", err);
+      // Fallback: try fetching without orderBy if index missing
+      if (err.code === 'failed-precondition') {
+        console.log('[TRAININGS] Retrying without orderBy...');
+        fetchTrainings();
+      }
     });
 }
 
@@ -2415,12 +2429,13 @@ function subscribeToPlayers() {
     .onSnapshot(snapshot => {
       players = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       totalPlayers = players.length;
+      console.log('[PLAYERS] Subscription received', players.length, 'players');
       saveToCache('players', players);
       renderPlayers();
       updateStats();
       renderPlayerSelect();
     }, err => {
-      console.error("Players subscription error:", err);
+      console.error("[PLAYERS] Subscription error:", err);
     });
 }
 
@@ -2811,8 +2826,13 @@ function showSection(section) {
     renderProfile();
   }
   if (section === 'trainings') {
-    // Trainings are kept up-to-date via onSnapshot subscription
+    // Trainings: render from cache/subscription immediately, fetch as fallback
     renderTrainings();
+    // Fallback: if no trainings loaded yet, fetch them now
+    if (trainings.length === 0) {
+      console.log('[TRAININGS] No cached data, fetching...');
+      fetchTrainings();
+    }
     if (trainingLocations.length === 0) fetchTrainingMeta();
   }
   if (section === 'admin' && isAdmin) {
@@ -5474,9 +5494,11 @@ function fetchMoreGames() {
 }
 
 function fetchTrainings() {
+  console.log('[TRAININGS] Fetching all trainings...');
   db.collection("padel_trainings").get()
     .then(snapshot => {
       trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      console.log('[TRAININGS] Fetched', trainings.length, 'trainings');
       saveToCache('trainings', trainings);
       renderTrainings();
       // Try deep-link after trainings load
@@ -6393,7 +6415,8 @@ async function createTraining() {
   }
 
   try {
-    await db.collection("padel_trainings").add({
+    console.log('[TRAINING] Creating training...');
+    const docRef = await db.collection("padel_trainings").add({
       date,
       timeStart,
       timeEnd,
@@ -6408,9 +6431,11 @@ async function createTraining() {
       createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+    console.log('[TRAINING] Created successfully, ID:', docRef.id);
     showToast("Тренировка создана", "success");
     closeCreateTrainingModal();
   } catch (e) {
+    console.error('[TRAINING] Create error:', e);
     showToast("Ошибка: " + e.message, "error");
   }
 }
