@@ -1927,6 +1927,14 @@ let selectedPlayersForTournament = new Set();
 let rrPairs = []; // Round Robin pairs: array of {id, playerIds: [p1, p2], name}
 let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
+const locks = {
+  createTournament: false,
+  finalizeTournament: false,
+  createGame: false,
+  saveGameSet: false,
+  finishGame: false,
+  createTraining: false
+};
 
 // ============================================
 // INIT
@@ -3535,6 +3543,8 @@ function autoFormPairs() {
 }
 
 async function createTournament() {
+  if (locks.createTournament) return;
+  locks.createTournament = true;
   const name = document.getElementById('tournamentName').value.trim();
   const date = document.getElementById('tournamentDate').value;
   const type = document.getElementById('tournamentType').value;
@@ -3636,10 +3646,11 @@ async function createTournament() {
     closeCreateTournamentModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.createTournament = false;
+    btn.disabled = false;
+    btn.innerHTML = '🏆 Создать турнир';
   }
-
-  btn.disabled = false;
-  btn.innerHTML = '🏆 Создать турнир';
 }
 
 // ============================================
@@ -4055,7 +4066,9 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
 }
 
 async function finalizeTournament(tournamentId) {
+  if (locks.finalizeTournament) return;
   if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
+  locks.finalizeTournament = true;
 
   try {
     const t = tournaments.find(x => x.id === tournamentId);
@@ -4209,6 +4222,8 @@ async function finalizeTournament(tournamentId) {
     await loadPlayers();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.finalizeTournament = false;
   }
 }
 
@@ -5331,6 +5346,8 @@ function closeCreateGameModal() {
 }
 
 async function createGame() {
+  if (locks.createGame) return;
+  locks.createGame = true;
   const date = document.getElementById('gameDate').value;
   const p11 = document.getElementById('gamePair1Player1').value;
   const p12 = document.getElementById('gamePair1Player2').value;
@@ -5366,6 +5383,8 @@ async function createGame() {
     setTimeout(() => openGame(docRef.id), 300);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.createGame = false;
   }
 }
 
@@ -5579,6 +5598,8 @@ function selectGameScore(team, value) {
 }
 
 async function saveGameSet(gameId) {
+  if (locks.saveGameSet) return;
+  locks.saveGameSet = true;
 
   const s1 = gameScoreSelections.score1;
   const s2 = gameScoreSelections.score2;
@@ -5622,6 +5643,8 @@ async function saveGameSet(gameId) {
     openGame(gameId); // Перерисовываем
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.saveGameSet = false;
   }
 }
 
@@ -5714,7 +5737,9 @@ async function calculateGameRTTF(game) {
 }
 
 async function finishGame(gameId) {
+  if (locks.finishGame) return;
   if (!confirm("Завершить игру? Это действие нельзя отменить.")) return;
+  locks.finishGame = true;
 
   try {
     const g = games.find(x => x.id === gameId);
@@ -5733,6 +5758,8 @@ async function finishGame(gameId) {
     showToast("Игра завершена. Рейтинги обновлены.", "success");
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.finishGame = false;
   }
 }
 
@@ -5947,10 +5974,12 @@ function renderTrainingSlotInputs() {
 }
 
 async function createTraining() {
+  if (locks.createTraining) return;
   if (!isAdmin) {
     showToast("Только администратор может создавать тренировки", "error");
     return;
   }
+  locks.createTraining = true;
 
   const date = document.getElementById('trainingDate').value;
   const timeStart = document.getElementById('trainingTimeStart').value;
@@ -5996,6 +6025,8 @@ async function createTraining() {
     closeCreateTrainingModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  } finally {
+    locks.createTraining = false;
   }
 }
 
