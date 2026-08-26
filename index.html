@@ -4202,14 +4202,16 @@ async function finalizeTournament(tournamentId) {
 
     // Calculate RTTF ratings
     t.leaderboard = leaderboard;
-    await calculateRTTF(t);
+    const rttfResult = await calculateRTTF(t);
 
     // Update tournament
     const updateData = {
       status: 'finished',
       leaderboard: leaderboard,
       winners: winners,
-      finishedAt: firebase.firestore.FieldValue.serverTimestamp()
+      finishedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      ratingChanges: rttfResult?.ratingChanges || {},
+      ratingBonuses: rttfResult?.ratingBonuses || {}
     };
     if (pairLeaderboard.length > 0) {
       updateData.pairLeaderboard = pairLeaderboard;
@@ -4522,6 +4524,7 @@ async function calculateRTTF(tournament) {
   await batch.commit();
 
   // Bonuses for top 3 if 16+ players
+  const ratingBonuses = {};
   if (tournament.playerIds.length >= 16 && tournament.leaderboard) {
     const avgTop12 = tournament.playerIds
       .map(pid => playerRatings[pid])
@@ -4544,6 +4547,7 @@ async function calculateRTTF(tournament) {
       else bonusPercent = 0.5;
 
       const bonus = Math.round(pRating * (bonusPercent / 100));
+      ratingBonuses[pid] = bonus;
       const newRating = Math.max(1, (p.rating || 100) + bonus);
 
       await db.collection("padel_players").doc(pid).update({
@@ -4551,6 +4555,8 @@ async function calculateRTTF(tournament) {
       });
     }
   }
+
+  return { ratingChanges, ratingBonuses };
 }
 
 async function deleteTournament(tournamentId) {
@@ -4576,15 +4582,34 @@ async function deleteTournament(tournamentId) {
             tournamentCount: Math.max(0, (pData.tournamentCount || 0) - 1)
           };
 
-          // If tournament was finished, remove medals from top 3
-          if (t.status === 'finished' && t.leaderboard) {
-            const top3 = t.leaderboard.slice(0, 3);
-            for (let i = 0; i < top3.length; i++) {
-              if (top3[i].playerId === pid) {
-                const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-                updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+          // If tournament was finished, remove medals from top 3 and rollback ratings
+          if (t.status === 'finished') {
+            if (t.leaderboard) {
+              const top3 = t.leaderboard.slice(0, 3);
+              for (let i = 0; i < top3.length; i++) {
+                if (top3[i].playerId === pid) {
+                  const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+                  updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+                }
               }
             }
+
+            // Rollback RTTF rating changes
+            if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
+              const currentRating = pData.rating || 100;
+              const change = t.ratingChanges[pid];
+              updates.rating = Math.max(1, Math.round(currentRating - change));
+            }
+
+            // Rollback rating bonuses
+            if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
+              const currentRating = updates.rating || pData.rating || 100;
+              const bonus = t.ratingBonuses[pid];
+              updates.rating = Math.max(1, currentRating - bonus);
+            }
+
+            // Decrement tournamentsPlayed
+            updates.tournamentsPlayed = Math.max(0, (pData.tournamentsPlayed || 0) - 1);
           }
 
           await pRef.update(updates);
