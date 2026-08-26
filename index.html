@@ -4230,7 +4230,7 @@ async function finalizeTournament(tournamentId) {
 }
 
 async function recalculateTournament(tournamentId) {
-  if (!confirm("Пересчитать итоги турнира? Старые медали будут скорректированы.")) return;
+  if (!confirm("Пересчитать итоги турнира? Старые медали и рейтинги будут скорректированы.")) return;
 
   try {
     const t = tournaments.find(x => x.id === tournamentId);
@@ -4252,6 +4252,45 @@ async function recalculateTournament(tournamentId) {
             });
           }
         }
+      }
+    }
+
+    // 1.5. Откатываем старые изменения рейтинга и бонусы
+    const rollbackBatch = db.batch();
+    for (const pid of t.playerIds) {
+      const p = players.find(pl => pl.id === pid);
+      if (!p) continue;
+
+      const currentRating = p.rating || 100;
+      let newRating = currentRating;
+
+      // Откат базовых изменений рейтинга
+      if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
+        newRating -= t.ratingChanges[pid];
+      }
+      // Откат бонусов за топ-3
+      if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
+        newRating -= t.ratingBonuses[pid];
+      }
+
+      rollbackBatch.update(db.collection("padel_players").doc(pid), {
+        rating: Math.max(1, Math.round(newRating))
+      });
+    }
+    await rollbackBatch.commit();
+
+    // Обновляем локальный кэш игроков после отката
+    for (const pid of t.playerIds) {
+      const p = players.find(pl => pl.id === pid);
+      if (p) {
+        let newRating = p.rating || 100;
+        if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
+          newRating -= t.ratingChanges[pid];
+        }
+        if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
+          newRating -= t.ratingBonuses[pid];
+        }
+        p.rating = Math.max(1, Math.round(newRating));
       }
     }
 
@@ -4387,8 +4426,16 @@ async function recalculateTournament(tournamentId) {
     t.leaderboard = leaderboard;
     t.winners = winners;
 
-    // Пересчитываем RTTF рейтинги
-    await calculateRTTF(t);
+    // Пересчитываем RTTF рейтинги (без изменения счётчиков турниров)
+    const rttfResult = await calculateRTTF(t, { skipTournamentsPlayed: true });
+
+    // Сохраняем новые рейтинговые изменения в документ турнира
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      ratingChanges: rttfResult?.ratingChanges || {},
+      ratingBonuses: rttfResult?.ratingBonuses || {}
+    });
+    t.ratingChanges = rttfResult?.ratingChanges || {};
+    t.ratingBonuses = rttfResult?.ratingBonuses || {};
 
     showToast("Итоги пересчитаны!", "success");
     openTournament(tournamentId);
@@ -4425,11 +4472,12 @@ function getDscore(diff, scoringSystem) {
   }
 }
 
-async function calculateRTTF(tournament) {
+async function calculateRTTF(tournament, options = {}) {
   if (!tournament || !tournament.schedule || !tournament.scores) return;
 
   const isRoundRobin = tournament.type === 'roundrobin';
   const scoringSystem = tournament.scoringSystem || 'points';
+  const skipTournamentsPlayed = options.skipTournamentsPlayed || false;
 
   // Get current ratings for all players
   const playerRatings = {};
@@ -4517,7 +4565,7 @@ async function calculateRTTF(tournament) {
 
     batch.update(db.collection("padel_players").doc(pid), {
       rating: newRating,
-      tournamentsPlayed: newTournamentsPlayed
+      ...(skipTournamentsPlayed ? {} : { tournamentsPlayed: newTournamentsPlayed })
     });
   }
 
@@ -5301,12 +5349,13 @@ function renderGames() {
     const statusClass = g.status === 'finished' ? 'status-finished' : 'status-active';
     const statusText = g.status === 'finished' ? 'Завершена' : 'Идёт';
 
-    const p1names = g.pair1?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
-    const p2names = g.pair2?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
+    const displayOrder = getGameDisplayOrder(g);
+    const p1names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
+    const p2names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
 
     let scoreDisplay = '';
-    if (g.sets && g.sets.length > 0) {
-      scoreDisplay = g.sets.map(s => `${s.score1}:${s.score2}`).join(', ');
+    if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
+      scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(', ');
     }
 
     html += `
@@ -5497,12 +5546,13 @@ function openGame(gameId) {
 
   // Счёт по сетам
   if (g.sets && g.sets.length > 0) {
-    const p1namesBr = g.pair1?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
-    const p2namesBr = g.pair2?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
+    const displayOrder = getGameDisplayOrder(g);
+    const p1namesBr = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
+    const p2namesBr = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
     html += `<div style="display:flex; align-items:center; gap: 16px;">
       <div style="flex:1; text-align:right; font-size: 18px; color: var(--text-muted); line-height: 1.5;">${p1namesBr}</div>
       <div style="display:flex; flex-direction:column; gap: 0px;">
-        ${g.sets.map(s => `<div style="font-size: 28px; font-weight: 800; color: var(--accent); text-align:center;">${s.score1}:${s.score2}</div>`).join('')}
+        ${displayOrder.scores1First.map(s => `<div style="font-size: 28px; font-weight: 800; color: var(--accent); text-align:center;">${s.score1}:${s.score2}</div>`).join('')}
       </div>
       <div style="flex:1; text-align:left; font-size: 18px; color: var(--text-muted); line-height: 1.5;">${p2namesBr}</div>
     </div>`;
@@ -5671,6 +5721,43 @@ async function saveGameSet(gameId) {
   } finally {
     locks.saveGameSet = false;
   }
+}
+
+function getGameDisplayOrder(g) {
+  const isFinished = g.status === 'finished';
+  if (!isFinished || !g.sets || g.sets.length === 0) {
+    return {
+      pair1First: g.pair1,
+      pair2First: g.pair2,
+      scores1First: g.sets || [],
+      isSwapped: false
+    };
+  }
+
+  let pair1Wins = 0;
+  let pair2Wins = 0;
+  g.sets.forEach(s => {
+    const s1 = s.score1 || 0;
+    const s2 = s.score2 || 0;
+    if (s1 > s2) pair1Wins++;
+    else if (s2 > s1) pair2Wins++;
+  });
+
+  if (pair2Wins > pair1Wins) {
+    return {
+      pair1First: g.pair2,
+      pair2First: g.pair1,
+      scores1First: g.sets.map(s => ({ score1: s.score2, score2: s.score1 })),
+      isSwapped: true
+    };
+  }
+
+  return {
+    pair1First: g.pair1,
+    pair2First: g.pair2,
+    scores1First: g.sets,
+    isSwapped: false
+  };
 }
 
 async function calculateGameRTTF(game) {
