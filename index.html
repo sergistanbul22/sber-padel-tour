@@ -5332,27 +5332,86 @@ function subscribeToTrainingMeta() {
 }
 
 function checkUrlHash() {
-  // Parse query param ?training=ID (reliable in Telegram in-app browser)
+  // Parse query param ?training=ID or ?planned-game=ID
   const params = new URLSearchParams(window.location.search);
   let trainingId = params.get('training');
+  let plannedGameId = params.get('planned-game');
   
   // Fallback: try hash #training=ID for backward compatibility
-  if (!trainingId) {
+  if (!trainingId && !plannedGameId) {
     const hash = window.location.hash;
     if (hash && hash.startsWith('#training=')) {
       trainingId = hash.replace('#training=', '').split('&')[0];
+    } else if (hash && hash.startsWith('#planned-game=')) {
+      plannedGameId = hash.replace('#planned-game=', '').split('&')[0];
     }
   }
   
-  console.log('[DEEP-LINK] search:', window.location.search, '| hash:', window.location.hash, '| trainingId:', trainingId);
+  console.log('[DEEP-LINK] search:', window.location.search, '| hash:', window.location.hash, '| trainingId:', trainingId, '| plannedGameId:', plannedGameId);
   
   if (trainingId) {
     console.log('[DEEP-LINK] Switching to trainings section...');
     showSection('trainings');
     console.log('[DEEP-LINK] Starting retry loop for modal...');
     tryOpenTrainingModal(trainingId, 0);
+  } else if (plannedGameId) {
+    console.log('[DEEP-LINK] Switching to games section for planned game...');
+    showSection('games');
+    tryOpenPlannedGameModal(plannedGameId, 0);
   } else {
-    console.log('[DEEP-LINK] No training param found');
+    console.log('[DEEP-LINK] No param found');
+  }
+}
+
+function tryOpenPlannedGameModal(plannedGameId, attempt) {
+  console.log('[DEEP-LINK] Attempt', attempt, 'planned games loaded:', plannedGames.length);
+  if (plannedGames.length > 0) {
+    const pg = plannedGames.find(x => x.id === plannedGameId);
+    if (pg) {
+      console.log('[DEEP-LINK] Found planned game, opening modal:', plannedGameId);
+      openPlannedGame(plannedGameId);
+      return;
+    } else {
+      console.log('[DEEP-LINK] Planned game not found in list:', plannedGameId);
+    }
+  }
+  if (attempt < 15) {
+    setTimeout(() => tryOpenPlannedGameModal(plannedGameId, attempt + 1), 1000);
+  } else {
+    console.log('[DEEP-LINK] Failed to open planned game after retries');
+  }
+}
+
+function shareCardLink(type, id) {
+  const baseUrl = window.location.origin + window.location.pathname;
+  const shareUrl = baseUrl + '?' + type + '=' + encodeURIComponent(id);
+  
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      showToast("Ссылка скопирована!", "success");
+    }).catch(() => {
+      // Fallback
+      const textarea = document.createElement('textarea');
+      textarea.value = shareUrl;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      showToast("Ссылка скопирована!", "success");
+    });
+  } else {
+    // Fallback for older browsers
+    const textarea = document.createElement('textarea');
+    textarea.value = shareUrl;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast("Ссылка скопирована!", "success");
   }
 }
 
@@ -5487,9 +5546,10 @@ function renderGames() {
               </div>
             </div>
             ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
+              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('planned-game', '${pg.id}')" title="Поделиться ссылкой">🔁</span>
               <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyPlannedGame('${pg.id}')" title="Копировать">📋</span>
               <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deletePlannedGame('${pg.id}')" title="Удалить">🗑️</span>
-            </div>` : ''}
+            </div>` : `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('planned-game', '${pg.id}')" title="Поделиться ссылкой">🔁</span>`}
           </div>
         </div>
       `;
@@ -5682,8 +5742,11 @@ function openPlannedGame(plannedGameId) {
     const appsList = applications.length > 0
       ? applications.map((app, idx) => {
           const canConfirm = isOrganizerOrAdmin && !isFull && pg.status !== 'converted';
+          const appInfoBtn = (isOrganizerOrAdmin && app.playerId)
+            ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${app.playerId}', '${escapeHtml(app.playerName)}')" title="Контактные данные">ℹ️</span>`
+            : '';
           return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}</span>
+            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
             ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmPlannedGameApplication('${plannedGameId}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
           </div>`;
         }).join('')
@@ -7100,9 +7163,10 @@ function renderTrainings() {
             </div>
           </div>
           ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
+            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('training', '${t.id}')" title="Поделиться ссылкой">🔁</span>
             <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyTraining('${t.id}')" title="Копировать">📋</span>
             <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deleteTraining('${t.id}')" title="Удалить">🗑️</span>
-          </div>` : ''}
+          </div>` : `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('training', '${t.id}')" title="Поделиться ссылкой">🔁</span>`}
         </div>
       </div>
     `;
@@ -7168,8 +7232,11 @@ function openTraining(trainingId) {
     const appsList = applications.length > 0
       ? applications.map((app, idx) => {
           const canConfirm = isOrganizerOrAdmin && !isFull;
+          const appInfoBtn = (isOrganizerOrAdmin && app.playerId)
+            ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${app.playerId}', '${escapeHtml(app.playerName)}')" title="Контактные данные">ℹ️</span>`
+            : '';
           return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}</span>
+            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
             ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmTrainingApplication('${trainingId}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
           </div>`;
         }).join('')
