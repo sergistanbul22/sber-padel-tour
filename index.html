@@ -1575,7 +1575,7 @@
 <section class="section" id="section-admin">
   <h2 class="section-title">Панель управления</h2>
   <p class="section-subtitle">Управление игроками, турнирами и администраторами</p>
-  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 27.08.2026/2</div>
+  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 27.08.2026/3</div>
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header" style="justify-content: space-between;">
@@ -1873,7 +1873,7 @@ const FIREBASE_CONFIG = {
 const SUPER_ADMIN_LOGIN = "6585875box";
 const SUPER_ADMIN_PASS = "Kluha082";
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "27.08.2026/2";
+const SITE_VERSION = "27.08.2026/3";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -5479,6 +5479,7 @@ function renderGames() {
               <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
                 📍 ${escapeHtml(pg.location)}${pg.createdByName ? ' | 👤 ' + escapeHtml(pg.createdByName) : ''}
               </div>
+              ${pg.comment ? `<div style="font-size: 12px; color: var(--accent); font-weight: 500; margin-bottom: 2px;">💬 ${escapeHtml(pg.comment)}</div>` : ''}
               <div style="font-size: 13px; font-weight: 600;">
                 <span style="color: ${isFull ? 'var(--danger)' : 'var(--accent)'}">
                   ${bookedCount} / ${pg.totalSlots} мест занято
@@ -5486,6 +5487,7 @@ function renderGames() {
               </div>
             </div>
             ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
+              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyPlannedGame('${pg.id}')" title="Копировать">📋</span>
               <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deletePlannedGame('${pg.id}')" title="Удалить">🗑️</span>
             </div>` : ''}
           </div>
@@ -5513,6 +5515,7 @@ function openPlanGameModal() {
   document.getElementById('planGameTimeEnd').value = '';
   document.getElementById('planGameLocation').value = '';
   document.getElementById('planGameSlotsCount').value = '8';
+  document.getElementById('planGameComment').value = '';
   document.getElementById('addPlanGameLocationWrap').style.display = 'none';
   renderPlanGameSlotInputs();
   populatePlanGameSelects();
@@ -5578,6 +5581,7 @@ async function createPlannedGame() {
   const timeStart = document.getElementById('planGameTimeStart').value;
   const timeEnd = document.getElementById('planGameTimeEnd').value;
   const location = document.getElementById('planGameLocation').value;
+  const comment = document.getElementById('planGameComment').value.trim();
   const totalSlots = parseInt(document.getElementById('planGameSlotsCount').value) || 8;
 
   if (!date) { showToast("Выберите дату", "error"); return; }
@@ -5601,6 +5605,7 @@ async function createPlannedGame() {
       timeStart,
       timeEnd,
       location,
+      comment: comment || null,
       totalSlots,
       slots,
       applications: [],
@@ -5640,14 +5645,15 @@ function openPlannedGame(plannedGameId) {
       if (isOrganizerOrAdmin) {
         const currentPlayer = players.find(p => p.id === slot.playerId);
         const currentValue = slot.playerId || '';
+        const currentName = slot.playerName || '';
         slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
           <span>Слот ${idx + 1}${infoBtn}</span>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <select class="form-select" style="max-width: 200px;" onchange="changePlannedGamePlayer('${plannedGameId}', ${idx}, this.value)">
-              <option value="">Свободно</option>
-              ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}" ${p.id === currentValue ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
-              ${currentValue && !currentPlayer ? `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(slot.playerName || 'Неизвестный')}</option>` : ''}
-            </select>
+          <div style="display: flex; align-items: center; gap: 8px; position: relative;">
+            <div style="position: relative; width: 200px;">
+              <input type="text" class="form-input game-player-search" id="planGameSlot_${idx}_name" value="${escapeHtml(currentName)}" placeholder="🔍 Поиск игрока..." oninput="onPlanGameSlotSearch('${plannedGameId}', ${idx})" onfocus="onPlanGameSlotSearch('${plannedGameId}', ${idx})" style="width: 100%;">
+              <input type="hidden" id="planGameSlot_${idx}_id" value="${escapeHtml(currentValue)}">
+              <div class="game-player-dropdown" id="planGameSlot_${idx}_dropdown"></div>
+            </div>
             ${currentValue ? `<span style="cursor:pointer; font-size:16px; padding: 4px;" onclick="changePlannedGamePlayer('${plannedGameId}', ${idx}, '')" title="Очистить слот">🗑️</span>` : '<span style="width: 24px;"></span>'}
           </div>
         </div>`;
@@ -5789,6 +5795,10 @@ function openPlannedGame(plannedGameId) {
         <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Локация</div>
         <div style="font-size: 16px; font-weight: 600;">📍 ${escapeHtml(pg.location)}</div>
       </div>
+      ${pg.comment ? `<div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Комментарий</div>
+        <div style="font-size: 16px; font-weight: 600; color: var(--accent);">💬 ${escapeHtml(pg.comment)}</div>
+      </div>` : ''}
       ${pg.createdByName ? `<div style="margin-bottom: 16px;">
         <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Организатор</div>
         <div style="font-size: 16px; font-weight: 600;">👤 ${escapeHtml(pg.createdByName)}</div>
@@ -6173,6 +6183,79 @@ async function deletePlannedGame(plannedGameId) {
   }
 }
 
+// ===== Planned Game Slot Search =====
+function onPlanGameSlotSearch(plannedGameId, slotIndex) {
+  const nameInput = document.getElementById(`planGameSlot_${slotIndex}_name`);
+  const dropdown = document.getElementById(`planGameSlot_${slotIndex}_dropdown`);
+  const query = (nameInput?.value || '').trim().toLowerCase();
+
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (pg && pg.slots) {
+    pg.slots.forEach((_, idx) => {
+      if (idx !== slotIndex) hidePlanGameSlotDropdown(idx);
+    });
+  }
+
+  if (players.length === 0) {
+    dropdown.innerHTML = '<div class="game-player-option no-results">Нет игроков</div>';
+    dropdown.classList.add('show');
+    return;
+  }
+
+  const sorted = [...players].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru'));
+  const filtered = query ? sorted.filter(p => (p.name || '').toLowerCase().includes(query)) : sorted;
+
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div class="game-player-option no-results">Нет совпадений</div>';
+  } else {
+    dropdown.innerHTML = filtered.map(p =>
+      `<div class="game-player-option" onclick="selectPlanGameSlotPlayer('${plannedGameId}', ${slotIndex}, '${p.id}', '${escapeHtml(p.name)}')">${escapeHtml(p.name)}</div>`
+    ).join('');
+  }
+  dropdown.classList.add('show');
+}
+
+function selectPlanGameSlotPlayer(plannedGameId, slotIndex, playerId, playerName) {
+  document.getElementById(`planGameSlot_${slotIndex}_id`).value = playerId;
+  document.getElementById(`planGameSlot_${slotIndex}_name`).value = playerName;
+  hidePlanGameSlotDropdown(slotIndex);
+  changePlannedGamePlayer(plannedGameId, slotIndex, playerId);
+}
+
+function hidePlanGameSlotDropdown(slotIndex) {
+  const dropdown = document.getElementById(`planGameSlot_${slotIndex}_dropdown`);
+  if (dropdown) dropdown.classList.remove('show');
+}
+
+// Copy planned game
+function copyPlannedGame(plannedGameId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  document.getElementById('planGameDate').value = '';
+  document.getElementById('planGameTimeStart').value = pg.timeStart || '';
+  document.getElementById('planGameTimeEnd').value = pg.timeEnd || '';
+  document.getElementById('planGameSlotsCount').value = String(pg.totalSlots || 8);
+  document.getElementById('planGameComment').value = pg.comment || '';
+  document.getElementById('addPlanGameLocationWrap').style.display = 'none';
+
+  populatePlanGameSelects();
+  renderPlanGameSlotInputs();
+
+  document.getElementById('planGameLocation').value = pg.location || '';
+
+  if (pg.slots) {
+    pg.slots.forEach((slot, idx) => {
+      const select = document.getElementById(`planGameSlot_${idx}`);
+      if (select && slot.playerId) {
+        select.value = slot.playerId;
+      }
+    });
+  }
+
+  document.getElementById('planGameModal').classList.add('show');
+}
+
 function openCreateTournamentModal() {
   document.getElementById('createTournamentModal').classList.add('show');
   // Set default date
@@ -6303,6 +6386,14 @@ function hideGamePlayerDropdown(fieldId) {
     fields.forEach(id => {
       const nameInput = document.getElementById(id + 'Name');
       const dropdown = document.getElementById(id + 'Dropdown');
+      if (nameInput && dropdown && !nameInput.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.classList.remove('show');
+      }
+    });
+    // Also hide planned game slot dropdowns
+    document.querySelectorAll('[id^="planGameSlot_"][id$="_dropdown"]').forEach(dropdown => {
+      const idx = dropdown.id.replace('planGameSlot_', '').replace('_dropdown', '');
+      const nameInput = document.getElementById(`planGameSlot_${idx}_name`);
       if (nameInput && dropdown && !nameInput.contains(e.target) && !dropdown.contains(e.target)) {
         dropdown.classList.remove('show');
       }
@@ -7193,6 +7284,7 @@ function showSlotPlayerInfo(playerId, playerName) {
 
   const p = players.find(x => x.id === playerId);
   const rating = p && p.rating ? p.rating : '—';
+  const lundaRating = p && p.lundaRating ? p.lundaRating : null;
   let telegram = p && p.telegram ? p.telegram : '';
   if (telegram && !telegram.startsWith('@')) telegram = '@' + telegram;
 
@@ -7204,6 +7296,10 @@ function showSlotPlayerInfo(playerId, playerName) {
   popup.id = 'slotPlayerInfoPopup';
   popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:20px;z-index:10000;max-width:300px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
 
+  const lundaHtml = lundaRating
+    ? `<div style="margin-bottom:8px;">🎾 Рейтинг LUNDA: <b>${lundaRating}</b></div>`
+    : `<div style="margin-bottom:8px;color:var(--text-muted);">🎾 Рейтинг LUNDA: не указан</div>`;
+
   const telegramHtml = telegram
     ? `<div style="margin-bottom:16px;">✈️ Telegram: <a href="https://t.me/${telegram.replace('@','')}" target="_blank" style="color:var(--accent);font-weight:600;">${escapeHtml(telegram)}</a></div>`
     : `<div style="margin-bottom:16px;color:var(--text-muted);">✈️ Telegram: не указан</div>`;
@@ -7211,6 +7307,7 @@ function showSlotPlayerInfo(playerId, playerName) {
   popup.innerHTML = `
     <div style="font-weight:600;margin-bottom:12px;font-size:16px;">👤 ${escapeHtml(playerName)}</div>
     <div style="margin-bottom:8px;">📊 Рейтинг: <b>${rating}</b></div>
+    ${lundaHtml}
     ${telegramHtml}
     <button class="btn btn-primary" style="width:100%;" onclick="document.getElementById('slotPlayerInfoPopup').remove();document.getElementById('slotPlayerInfoOverlay').remove();">Закрыть</button>
   `;
@@ -7800,6 +7897,12 @@ init();
           <option value="12">12 (6 пар)</option>
           <option value="16">16 (8 пар)</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Комментарий (опционально)</label>
+        <input type="text" class="form-input" id="planGameComment" placeholder="Например: уровень 500+" maxlength="50">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Макс. 50 символов</div>
       </div>
 
       <div class="form-group">
