@@ -451,6 +451,26 @@
     min-width: 700px;
   }
 
+  #usersTable {
+    min-width: 900px;
+  }
+
+  #usersTable th,
+  #usersTable td {
+    white-space: nowrap;
+    padding: 10px 10px;
+    font-size: 13px;
+  }
+
+  #usersTable th {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+
+  #usersTable td:nth-child(5) {
+    text-align: center;
+  }
+
   .data-table th {
     text-align: left;
     padding: 14px 16px;
@@ -1120,8 +1140,17 @@
       font-size: 12px;
     }
 
-    .player-name {
-      font-size: 13px;
+    /* Users table mobile - compact */
+    #usersTable th,
+    #usersTable td {
+      padding: 6px 6px;
+      font-size: 11px;
+    }
+
+    #usersTable th {
+      font-size: 10px;
+      padding: 6px 6px;
+    }
       white-space: nowrap;
     }
 
@@ -1502,6 +1531,7 @@
 
   <div style="text-align: center; margin-bottom: 24px;" id="createGameBtnContainer">
     <button class="btn btn-primary" onclick="openCreateGameModal()">➕ Создать игру</button>
+    <button class="btn btn-secondary" style="margin-left: 8px;" onclick="openPlanGameModal()">📋 Запланировать игру</button>
   </div>
 
   <div id="gamesList">
@@ -1545,6 +1575,7 @@
 <section class="section" id="section-admin">
   <h2 class="section-title">Панель управления</h2>
   <p class="section-subtitle">Управление игроками, турнирами и администраторами</p>
+  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 27.08.2026/2</div>
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header" style="justify-content: space-between;">
@@ -1842,6 +1873,7 @@ const FIREBASE_CONFIG = {
 const SUPER_ADMIN_LOGIN = "6585875box";
 const SUPER_ADMIN_PASS = "Kluha082";
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
+const SITE_VERSION = "27.08.2026/2";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -1917,6 +1949,7 @@ let players = [];
 let tournaments = [];
 let games = [];
 let trainings = [];
+let plannedGames = [];
 let trainingLocations = [];
 let trainingCoaches = [];
 let trainingGroups = [];
@@ -1954,6 +1987,7 @@ function init() {
     subscribeToTournaments();
     subscribeToGames();
     subscribeToTrainings();
+        subscribeToPlannedGames();
     subscribeToTrainingMeta();
 
     auth.onAuthStateChanged(handleAuthStateChanged);
@@ -2628,6 +2662,7 @@ async function renderProfile() {
     const gender = userData.gender || '';
     const email = userData.recoveryEmail || '';
     const telegram = userData.telegram || '';
+    const lundaRating = userData.lundaRating || '';
 
     // Get linked player data
     let playerData = null;
@@ -2690,6 +2725,10 @@ async function renderProfile() {
           <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Telegram</label>
           <input type="text" class="form-input" id="profileTelegram" value="${escapeHtml(telegram)}" placeholder="@username" style="width:100%;">
         </div>
+        <div style="padding:8px 0;">
+          <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Рейтинг LUNDA</label>
+          <input type="number" step="0.01" class="form-input" id="profileLundaRating" value="${escapeHtml(lundaRating)}" placeholder="100.00" min="1" style="width:100%;">
+        </div>
         <button class="btn btn-primary" style="width:100%; margin-top:8px;" onclick="saveProfile()">💾 Сохранить изменения</button>
       </div>
     `;
@@ -2709,6 +2748,7 @@ async function saveProfile() {
   const email = document.getElementById('profileEmail').value.trim();
   let telegram = document.getElementById('profileTelegram').value.trim();
   if (telegram && !telegram.startsWith('@')) telegram = '@' + telegram;
+  const lundaRating = document.getElementById('profileLundaRating').value.trim();
 
   if (!firstName || !lastName) {
     showToast("Имя и фамилия обязательны", "error");
@@ -2723,10 +2763,11 @@ async function saveProfile() {
     if (gender) updateData.gender = gender;
     if (email) updateData.recoveryEmail = email;
     if (telegram) updateData.telegram = telegram;
+    if (lundaRating) updateData.lundaRating = parseFloat(parseFloat(lundaRating).toFixed(2));
 
     await db.collection("users").doc(userEmail).update(updateData);
 
-    // Обновляем имя и telegram игрока в padel_players
+    // Обновляем имя, telegram и lundaRating игрока в padel_players
     const userDoc = await db.collection("users").doc(userEmail).get();
     if (userDoc.exists) {
       const userData = userDoc.data();
@@ -2734,6 +2775,7 @@ async function saveProfile() {
         const playerName = lastName + " " + firstName;
         const ppUpdate = { name: playerName };
         if (telegram) ppUpdate.telegram = telegram;
+        if (lundaRating) ppUpdate.lundaRating = parseFloat(parseFloat(lundaRating).toFixed(2));
         await db.collection("padel_players").doc(userData.playerId).update(ppUpdate);
         // Обновляем кэш
         await loadPlayers();
@@ -5076,7 +5118,7 @@ function renderUsers() {
     return nameA.localeCompare(nameB);
   });
 
-  let html = '<table class="data-table"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<div class="table-scroll"><table class="data-table" id="usersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Рейтинг LUNDA</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   sortedAdmins.forEach(a => {
     // Determine role display
     const role = a.role || (a.isApproved ? 'admin' : 'player');
@@ -5093,26 +5135,28 @@ function renderUsers() {
     html += `<tr>
       <td>${escapeHtml(a.lastName || '')} ${escapeHtml(a.firstName || '')}</td>
       <td>${escapeHtml(a.login || '')}</td>
-      <td>${escapeHtml(a.id)}</td>
+      <td>${escapeHtml(a.recoveryEmail || '-')}</td>
+      <td>${escapeHtml(a.telegram || '-')}</td>
+      <td>${a.lundaRating ? parseFloat(a.lundaRating).toFixed(2) : '-'}</td>
       <td>${roleBadge}</td>
-      <td style="text-align: right;">`;
+      <td style="text-align: right; white-space: nowrap;">`;
 
     // Role change buttons (only superadmin can change roles)
     if (canManage) {
       if (role === 'player') {
-        html += `<button class="btn btn-primary btn-sm" onclick="changeUserRole('${a.id}', 'admin')" style="margin-right:8px">Сделать админом</button>`;
+        html += `<button class="btn btn-primary btn-sm" onclick="changeUserRole('${a.id}', 'admin')" style="margin-right:6px;padding:4px 8px;font-size:11px">⬆️ Админ</button>`;
       } else if (role === 'admin') {
-        html += `<button class="btn btn-secondary btn-sm" onclick="changeUserRole('${a.id}', 'player')" style="margin-right:8px">Снять админа</button>`;
+        html += `<button class="btn btn-secondary btn-sm" onclick="changeUserRole('${a.id}', 'player')" style="margin-right:6px;padding:4px 8px;font-size:11px">⬇️ Игрок</button>`;
       }
     }
 
     if (canDelete) {
-      html += `<button class="btn btn-danger btn-sm" onclick="deleteUser('${a.id}')">Удалить</button>`;
+      html += `<button class="btn btn-danger btn-sm" onclick="deleteUser('${a.id}')" style="padding:4px 8px;font-size:11px">🗑️</button>`;
     }
 
     html += `</td></tr>`;
   });
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   container.innerHTML = html;
 }
 
@@ -5260,6 +5304,15 @@ function subscribeToTrainings() {
   });
 }
 
+function subscribeToPlannedGames() {
+  db.collection("padel_planned_games").onSnapshot(snapshot => {
+    plannedGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderGames();
+  }, err => {
+    console.error("Planned games subscription error:", err);
+  });
+}
+
 function subscribeToTrainingMeta() {
   db.collection("settings").doc("training_meta").onSnapshot(doc => {
     if (doc.exists) {
@@ -5331,8 +5384,24 @@ function renderGames() {
     btnContainer.style.display = currentUser ? 'block' : 'none';
   }
 
-  if (games.length === 0) {
-    const emptyText = currentUser ? 'Нажмите кнопку выше, чтобы создать игру' : 'Администратор может создать игру';
+  // Combine regular games and planned games
+  const allItems = [];
+  games.forEach(g => {
+    allItems.push({ type: 'game', data: g, sortDate: g.date || '', createdAt: g.createdAt?.toMillis ? g.createdAt.toMillis() : 0 });
+  });
+  plannedGames.forEach(pg => {
+    allItems.push({ type: 'planned', data: pg, sortDate: pg.date || '', createdAt: pg.createdAt?.toMillis ? pg.createdAt.toMillis() : 0 });
+  });
+
+  // Sort by date desc, then by createdAt desc
+  allItems.sort((a, b) => {
+    const dateCompare = (b.sortDate || '').localeCompare(a.sortDate || '');
+    if (dateCompare !== 0) return dateCompare;
+    return b.createdAt - a.createdAt;
+  });
+
+  if (allItems.length === 0) {
+    const emptyText = currentUser ? 'Нажмите кнопку выше, чтобы создать игру или запланировать' : 'Администратор может создать игру';
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">🎾</div>
@@ -5344,35 +5413,85 @@ function renderGames() {
   }
 
   let html = '';
-  games.forEach(g => {
-    const date = g.date ? new Date(g.date).toLocaleDateString('ru-RU') : '-';
-    const statusClass = g.status === 'finished' ? 'status-finished' : 'status-active';
-    const statusText = g.status === 'finished' ? 'Завершена' : 'Идёт';
+  allItems.forEach(item => {
+    if (item.type === 'game') {
+      const g = item.data;
+      const date = g.date ? new Date(g.date).toLocaleDateString('ru-RU') : '-';
+      const statusClass = g.status === 'finished' ? 'status-finished' : 'status-active';
+      const statusText = g.status === 'finished' ? 'Завершена' : 'Идёт';
 
-    const displayOrder = getGameDisplayOrder(g);
-    const p1names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
-    const p2names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
+      const displayOrder = getGameDisplayOrder(g);
+      const p1names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
+      const p2names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
 
-    let scoreDisplay = '';
-    if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
-      scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(', ');
-    }
+      let scoreDisplay = '';
+      if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
+        scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(', ');
+      }
 
-    html += `
-      <div class="card" style="position: relative; padding: 10px 12px;">
-        <div style="cursor: pointer; padding-right: 110px;" onclick="openGame('${g.id}')">
-          <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
-            <span style="font-size: 14px; font-weight: 700; color: var(--text-primary);">${p1names} vs ${p2names}</span>
-            <span style="font-size: 14px; color: var(--accent); font-weight: 700;">${scoreDisplay || '-'}</span>
+      html += `
+        <div class="card" style="position: relative; padding: 10px 12px;">
+          <div style="cursor: pointer; padding-right: 110px;" onclick="openGame('${g.id}')">
+            <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
+              <span style="font-size: 14px; font-weight: 700; color: var(--text-primary);">${p1names} vs ${p2names}</span>
+              <span style="font-size: 14px; color: var(--accent); font-weight: 700;">${scoreDisplay || '-'}</span>
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</div>
           </div>
-          <div style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</div>
+          <div style="position:absolute; right:12px; top:0; bottom:0; display:flex; flex-direction:row; align-items:center; gap: 8px;">
+            <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
+            ${canEdit(g) ? `<span style="cursor:pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить">🗑️</span>` : ''}
+          </div>
         </div>
-        <div style="position:absolute; right:12px; top:0; bottom:0; display:flex; flex-direction:row; align-items:center; gap: 8px;">
-          <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
-          ${canEdit(g) ? `<span style="cursor:pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить">🗑️</span>` : ''}
+      `;
+    } else {
+      // Planned game card
+      const pg = item.data;
+      const dateStr = formatTrainingDate(pg);
+      const bookedCount = pg.slots ? pg.slots.filter(s => s.playerId).length : 0;
+      const isFull = bookedCount >= pg.totalSlots;
+      const endDateTime = new Date((pg.date || '') + 'T' + (pg.timeEnd || '23:59'));
+      const isPast = endDateTime < new Date();
+      const isConverted = pg.status === 'converted';
+
+      let statusLabel = '';
+      if (isConverted) {
+        statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(160,160,160,0.15); color: var(--text-muted);">✓ Создана</span>';
+      } else if (isFull) {
+        statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(48,209,88,0.15); color: var(--success);">🎯 Готова</span>';
+      } else {
+        statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(33,160,56,0.15); color: var(--accent);">📋 Планирование</span>';
+      }
+
+      html += `
+        <div class="card" style="position: relative; padding: 16px;${isPast || isConverted ? ' opacity: 0.55;' : ''}">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div style="cursor: pointer; flex: 1;" onclick="${isConverted ? '' : `openPlannedGame('${pg.id}')`}">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
+                  ${isConverted ? '✓ ' : ''}📋 Запланированная игра
+                </span>
+                ${statusLabel}
+              </div>
+              <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
+                📅 ${dateStr}
+              </div>
+              <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
+                📍 ${escapeHtml(pg.location)}${pg.createdByName ? ' | 👤 ' + escapeHtml(pg.createdByName) : ''}
+              </div>
+              <div style="font-size: 13px; font-weight: 600;">
+                <span style="color: ${isFull ? 'var(--danger)' : 'var(--accent)'}">
+                  ${bookedCount} / ${pg.totalSlots} мест занято
+                </span>
+              </div>
+            </div>
+            ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
+              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deletePlannedGame('${pg.id}')" title="Удалить">🗑️</span>
+            </div>` : ''}
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    }
   });
 
   container.innerHTML = html;
@@ -5380,6 +5499,678 @@ function renderGames() {
 
 function closeCreateTournamentModal() {
   document.getElementById('createTournamentModal').classList.remove('show');
+}
+
+
+// ===== Planned Games =====
+function openPlanGameModal() {
+  if (!currentUser) {
+    showToast("Войдите, чтобы запланировать игру", "error");
+    return;
+  }
+  document.getElementById('planGameDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('planGameTimeStart').value = '';
+  document.getElementById('planGameTimeEnd').value = '';
+  document.getElementById('planGameLocation').value = '';
+  document.getElementById('planGameSlotsCount').value = '8';
+  document.getElementById('addPlanGameLocationWrap').style.display = 'none';
+  renderPlanGameSlotInputs();
+  populatePlanGameSelects();
+  document.getElementById('planGameModal').classList.add('show');
+}
+
+function closePlanGameModal() {
+  document.getElementById('planGameModal').classList.remove('show');
+}
+
+function showAddPlanGameLocationInput() {
+  const wrap = document.getElementById('addPlanGameLocationWrap');
+  wrap.style.display = wrap.style.display === 'flex' ? 'none' : 'flex';
+}
+
+async function addPlanGameLocation() {
+  const name = document.getElementById('newPlanGameLocationName').value.trim();
+  if (!name) return;
+  try {
+    const docRef = db.collection("settings").doc("training_meta");
+    const doc = await docRef.get();
+    const locations = doc.exists ? (doc.data().locations || []) : [];
+    if (!locations.includes(name)) {
+      locations.push(name);
+      await docRef.set({ locations }, { merge: true });
+    }
+    document.getElementById('newPlanGameLocationName').value = '';
+    document.getElementById('addPlanGameLocationWrap').style.display = 'none';
+    showToast("Локация добавлена", "success");
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+function populatePlanGameSelects() {
+  const locSelect = document.getElementById('planGameLocation');
+  if (!locSelect) return;
+  const currentLoc = locSelect.value;
+  locSelect.innerHTML = '<option value="">Выберите локацию...</option>' +
+    trainingLocations.map(l => `<option value="${escapeHtml(l)}" ${l === currentLoc ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+}
+
+function renderPlanGameSlotInputs() {
+  const container = document.getElementById('planGameSlotInputs');
+  const count = parseInt(document.getElementById('planGameSlotsCount').value) || 8;
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += `<select class="form-select" id="planGameSlot_${i}">
+      <option value="">Слот ${i + 1} — свободен</option>
+      ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+    </select>`;
+  }
+  container.innerHTML = html;
+}
+
+async function createPlannedGame() {
+  if (!currentUser) {
+    showToast("Войдите, чтобы запланировать игру", "error");
+    return;
+  }
+  const date = document.getElementById('planGameDate').value;
+  const timeStart = document.getElementById('planGameTimeStart').value;
+  const timeEnd = document.getElementById('planGameTimeEnd').value;
+  const location = document.getElementById('planGameLocation').value;
+  const totalSlots = parseInt(document.getElementById('planGameSlotsCount').value) || 8;
+
+  if (!date) { showToast("Выберите дату", "error"); return; }
+  if (!location) { showToast("Выберите локацию", "error"); return; }
+
+  const slots = [];
+  for (let i = 0; i < totalSlots; i++) {
+    const select = document.getElementById(`planGameSlot_${i}`);
+    const playerId = select ? select.value : '';
+    if (playerId) {
+      const player = players.find(p => p.id === playerId);
+      slots.push({ playerId, playerName: player ? player.name : '', bookedAt: new Date().toISOString() });
+    } else {
+      slots.push({ playerId: null, playerName: null, bookedAt: null });
+    }
+  }
+
+  try {
+    await db.collection("padel_planned_games").add({
+      date,
+      timeStart,
+      timeEnd,
+      location,
+      totalSlots,
+      slots,
+      applications: [],
+      pairs: null,
+      status: 'planning',
+      createdBy: (currentUser.email || '').toLowerCase(),
+      createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast("Игра запланирована", "success");
+    closePlanGameModal();
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+function openPlannedGame(plannedGameId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const dateStr = formatTrainingDate(pg);
+  const bookedCount = pg.slots ? pg.slots.filter(s => s.playerId).length : 0;
+  const isFull = bookedCount >= pg.totalSlots;
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const endDateTime = new Date((pg.date || '') + 'T' + (pg.timeEnd || '23:59'));
+  const isPast = endDateTime < new Date();
+  const isOrganizerOrAdmin = isAdmin || (pg.createdBy && pg.createdBy === userEmail);
+  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+
+  // Slots display
+  let slotsHtml = '';
+  if (pg.slots && pg.slots.length > 0) {
+    pg.slots.forEach((slot, idx) => {
+      const infoBtn = (isOrganizerOrAdmin && slot.playerId)
+        ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${slot.playerId}', '${escapeHtml(slot.playerName || '')}')" title="Контактные данные">ℹ️</span>`
+        : '';
+      if (isOrganizerOrAdmin) {
+        const currentPlayer = players.find(p => p.id === slot.playerId);
+        const currentValue = slot.playerId || '';
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span>Слот ${idx + 1}${infoBtn}</span>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <select class="form-select" style="max-width: 200px;" onchange="changePlannedGamePlayer('${plannedGameId}', ${idx}, this.value)">
+              <option value="">Свободно</option>
+              ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}" ${p.id === currentValue ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+              ${currentValue && !currentPlayer ? `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(slot.playerName || 'Неизвестный')}</option>` : ''}
+            </select>
+            ${currentValue ? `<span style="cursor:pointer; font-size:16px; padding: 4px;" onclick="changePlannedGamePlayer('${plannedGameId}', ${idx}, '')" title="Очистить слот">🗑️</span>` : '<span style="width: 24px;"></span>'}
+          </div>
+        </div>`;
+      } else if (slot.playerId) {
+        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <span>Слот ${idx + 1}${infoBtn}</span>
+          <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
+        </div>`;
+      } else {
+        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <span>Слот ${idx + 1}</span>
+          <span style="color: var(--accent);">✓ Свободно</span>
+        </div>`;
+      }
+    });
+  }
+
+  // Applications section
+  const applications = pg.applications || [];
+  const alreadyApplied = applications.some(a => a.playerId === userEmail || a.playerId === currentUserData?.playerId);
+  const alreadyBooked = pg.slots && pg.slots.some(s => s.playerId && (s.playerId === userEmail || s.playerId === currentUserData?.playerId));
+  const mySlotIndex = alreadyBooked ? pg.slots.findIndex(s => s.playerId === userEmail || s.playerId === currentUserData?.playerId) : -1;
+
+  let applicationsHtml = '';
+  if (applications.length > 0 || isOrganizerOrAdmin) {
+    const appsList = applications.length > 0
+      ? applications.map((app, idx) => {
+          const canConfirm = isOrganizerOrAdmin && !isFull && pg.status !== 'converted';
+          return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}</span>
+            ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmPlannedGameApplication('${plannedGameId}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
+          </div>`;
+        }).join('')
+      : '<div style="padding: 8px 0; color: var(--text-muted); font-size: 13px;">Пока нет заявок</div>';
+
+    applicationsHtml = `
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">📝 Заявки (${applications.length})</div>
+        <div style="background: var(--bg-secondary); border-radius: 8px; padding: 0 12px;">
+          ${appsList}
+        </div>
+      </div>
+    `;
+  }
+
+  // Pair distribution section
+  let pairsHtml = '';
+  if (pg.status === 'planning' && isFull && isOrganizerOrAdmin) {
+    pairsHtml = `
+      <div style="margin-bottom: 16px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">🎯 Распределить пары</div>
+        <button class="btn btn-primary" style="width: 100%; margin-bottom: 12px;" onclick="autoDistributePairs('${plannedGameId}')">🎲 Распределить автоматически</button>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; text-align: center;">— или вручную —</div>
+        <div id="manualPairsContainer"></div>
+        <button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="saveManualPairs('${plannedGameId}')">💾 Сохранить распределение</button>
+      </div>
+    `;
+    // Pre-populate manual pairs container with participant selects
+    setTimeout(() => {
+      const container = document.getElementById('manualPairsContainer');
+      if (!container) return;
+      const participants = pg.slots.filter(s => s.playerId).map(s => ({ id: s.playerId, name: s.playerName }));
+      const numPairs = pg.totalSlots / 2;
+      let manualHtml = '';
+      for (let i = 0; i < numPairs; i++) {
+        manualHtml += `<div style="margin-bottom: 12px; padding: 12px; background: var(--bg-card); border-radius: 8px;">
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Пара ${i + 1}</div>
+          <div style="display: flex; gap: 8px;">
+            <select class="form-select" id="manualPair_${i}_0" style="flex: 1;">
+              <option value="">Игрок 1...</option>
+              ${participants.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+            <select class="form-select" id="manualPair_${i}_1" style="flex: 1;">
+              <option value="">Игрок 2...</option>
+              ${participants.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+          </div>
+        </div>`;
+      }
+      container.innerHTML = manualHtml;
+    }, 0);
+  } else if (pg.status === 'ready' && pg.pairs) {
+    const pairsList = pg.pairs.map((pair, idx) => {
+      const p1name = getPlayerNameById(pair.player1) || '?';
+      const p2name = getPlayerNameById(pair.player2) || '?';
+      return `<div style="padding: 8px 0; border-bottom: 1px solid var(--border);">Пара ${idx + 1}: ${escapeHtml(p1name)} + ${escapeHtml(p2name)}</div>`;
+    }).join('');
+    pairsHtml = `
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">🎯 Распределение пар</div>
+        <div style="background: var(--bg-secondary); border-radius: 8px; padding: 0 12px;">
+          ${pairsList}
+        </div>
+      </div>
+    `;
+    if (isOrganizerOrAdmin) {
+      pairsHtml += `<button class="btn btn-primary" style="width: 100%; margin-bottom: 16px;" onclick="createGamesFromPlan('${plannedGameId}')">🎾 Создать игру(ы)</button>`;
+    }
+  }
+
+  // Action button
+  let actionBtn = '';
+  if (pg.status === 'converted') {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" disabled>Игра уже создана</button>`;
+  } else if (isPast && !isAdmin) {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" disabled>Игра завершена</button>`;
+  } else if (alreadyBooked) {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="cancelPlannedGameBooking('${plannedGameId}', ${mySlotIndex})">✕ Отменить запись</button>`;
+  } else if (alreadyApplied) {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="cancelPlannedGameApplication('${plannedGameId}')">✕ Отменить заявку</button>`;
+  } else if (currentUser && !isFull && pg.status !== 'converted') {
+    actionBtn = `<button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="applyForPlannedGame('${plannedGameId}')">📝 Подать заявку</button>`;
+  } else if (!currentUser) {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openLoginModal()">Войдите, чтобы подать заявку</button>`;
+  } else {
+    actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" disabled>Все места заняты</button>`;
+  }
+
+  let statusLabel = '';
+  if (pg.status === 'converted') {
+    statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(160,160,160,0.15); color: var(--text-muted);">✓ Создана</span>';
+  } else if (pg.status === 'ready') {
+    statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(48,209,88,0.15); color: var(--success);">🎯 Готова</span>';
+  } else {
+    statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(33,160,56,0.15); color: var(--accent);">📋 Планирование</span>';
+  }
+
+  const modalContent = `
+    <div style="max-width: 500px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+        <div style="font-size: 18px; font-weight: 600;">📋 Запланированная игра</div>
+        ${statusLabel}
+      </div>
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Дата</div>
+        <div style="font-size: 18px; font-weight: 600;">${dateStr}</div>
+      </div>
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Локация</div>
+        <div style="font-size: 16px; font-weight: 600;">📍 ${escapeHtml(pg.location)}</div>
+      </div>
+      ${pg.createdByName ? `<div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Организатор</div>
+        <div style="font-size: 16px; font-weight: 600;">👤 ${escapeHtml(pg.createdByName)}</div>
+      </div>` : ''}
+      ${applicationsHtml}
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">Места (${bookedCount}/${pg.totalSlots})</div>
+        ${slotsHtml}
+      </div>
+      ${pairsHtml}
+      ${actionBtn}
+    </div>
+  `;
+
+  const modalEl = document.getElementById('tournamentModal');
+  if (!modalEl) return;
+  document.getElementById('modalTitle').textContent = '📋 Запланированная игра';
+  document.getElementById('modalContent').innerHTML = modalContent;
+  modalEl.classList.add('open');
+}
+
+async function applyForPlannedGame(plannedGameId) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы подать заявку", "error");
+    return;
+  }
+
+  const userFirstName = currentUserData?.firstName || '';
+  const userLastName = currentUserData?.lastName || '';
+  if (!userFirstName.trim() || !userLastName.trim()) {
+    showToast("Заполните имя и фамилию в профиле перед подачей заявки", "error");
+    showSection('profile');
+    return;
+  }
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const playerId = currentUserData?.playerId || userEmail;
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const applications = pg.applications || [];
+  if (applications.some(a => a.playerId === playerId)) {
+    showToast("Вы уже подали заявку", "error");
+    return;
+  }
+  if (pg.slots && pg.slots.some(s => s.playerId === playerId)) {
+    showToast("Вы уже записаны", "error");
+    return;
+  }
+
+  let playerName = currentUserData?.cachedPlayerName || '';
+  if (!playerName.trim()) {
+    playerName = (currentUserData?.firstName || '') + ' ' + (currentUserData?.lastName || '');
+  }
+  if (!playerName.trim()) playerName = currentUser?.displayName || '';
+  if (!playerName.trim()) playerName = currentUserData?.login || '';
+  if (!playerName.trim()) playerName = currentUser?.email?.split('@')[0] || '';
+  if (!playerName.trim()) playerName = userEmail;
+
+  closeModal();
+  showToast("Заявка подана", "success");
+
+  const updatedApps = [...applications, {
+    playerId: playerId,
+    playerName: playerName,
+    appliedAt: new Date().toISOString()
+  }];
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({ applications: updatedApps });
+  } catch (e) {
+    showToast("Ошибка сохранения: " + e.message, "error");
+  }
+}
+
+async function cancelPlannedGameApplication(plannedGameId) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы отменить заявку", "error");
+    return;
+  }
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const playerId = currentUserData?.playerId || userEmail;
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const applications = pg.applications || [];
+  const appIndex = applications.findIndex(a => a.playerId === playerId);
+  if (appIndex === -1) {
+    showToast("Заявка не найдена", "error");
+    return;
+  }
+
+  if (!confirm("Отменить заявку?")) return;
+
+  closeModal();
+  showToast("Заявка отменена", "success");
+
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({ applications: updatedApps });
+  } catch (e) {
+    showToast("Ошибка сохранения: " + e.message, "error");
+  }
+}
+
+async function confirmPlannedGameApplication(plannedGameId, playerId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  if (!isAdmin && !isOrganizer) {
+    showToast("Только организатор или администратор может подтверждать заявки", "error");
+    return;
+  }
+
+  const applications = pg.applications || [];
+  const app = applications.find(a => a.playerId === playerId);
+  if (!app) {
+    showToast("Заявка не найдена", "error");
+    return;
+  }
+
+  const freeSlotIndex = pg.slots.findIndex(s => !s.playerId);
+  if (freeSlotIndex === -1) {
+    showToast("Нет свободных мест", "error");
+    return;
+  }
+
+  const updatedSlots = [...pg.slots];
+  updatedSlots[freeSlotIndex] = {
+    playerId: app.playerId,
+    playerName: app.playerName,
+    bookedAt: new Date().toISOString()
+  };
+
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({
+      slots: updatedSlots,
+      applications: updatedApps
+    });
+    showToast("Заявка подтверждена", "success");
+    openPlannedGame(plannedGameId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function changePlannedGamePlayer(plannedGameId, slotIndex, newPlayerId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg || !pg.slots || slotIndex < 0 || slotIndex >= pg.slots.length) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  if (!isSuperAdmin && !isOrganizer) {
+    showToast("Только организатор или супер-админ может редактировать записи", "error");
+    return;
+  }
+
+  try {
+    const updatedSlots = [...pg.slots];
+    if (!newPlayerId) {
+      updatedSlots[slotIndex] = { playerId: null, playerName: null, bookedAt: null };
+    } else {
+      const player = players.find(p => p.id === newPlayerId);
+      updatedSlots[slotIndex] = {
+        playerId: newPlayerId,
+        playerName: player ? player.name : '',
+        bookedAt: new Date().toISOString()
+      };
+    }
+
+    await db.collection("padel_planned_games").doc(plannedGameId).update({ slots: updatedSlots });
+    showToast("Запись обновлена", "success");
+    openPlannedGame(plannedGameId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function cancelPlannedGameBooking(plannedGameId, slotIndex) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы отменить запись", "error");
+    return;
+  }
+
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg || !pg.slots || slotIndex < 0 || slotIndex >= pg.slots.length) return;
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const slot = pg.slots[slotIndex];
+
+  if (!isAdmin && slot.playerId !== userEmail && slot.playerId !== currentUserData?.playerId) {
+    showToast("Вы можете отменить только свою запись", "error");
+    return;
+  }
+
+  if (!confirm("Отменить запись?")) return;
+
+  closeModal();
+  showToast("Запись отменена", "success");
+
+  const updatedSlots = [...pg.slots];
+  updatedSlots[slotIndex] = { playerId: null, playerName: null, bookedAt: null };
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({ slots: updatedSlots });
+  } catch (e) {
+    showToast("Ошибка сохранения: " + e.message, "error");
+  }
+}
+
+function autoDistributePairs(plannedGameId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const participants = pg.slots.filter(s => s.playerId).map(s => s.playerId);
+  if (participants.length !== pg.totalSlots) {
+    showToast("Не все слоты заполнены", "error");
+    return;
+  }
+
+  // Shuffle
+  for (let i = participants.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [participants[i], participants[j]] = [participants[j], participants[i]];
+  }
+
+  const pairs = [];
+  for (let i = 0; i < participants.length; i += 2) {
+    pairs.push({player1: participants[i], player2: participants[i + 1]});
+  }
+
+  savePairs(plannedGameId, pairs);
+}
+
+function saveManualPairs(plannedGameId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const numPairs = pg.totalSlots / 2;
+  const pairs = [];
+  const usedPlayers = new Set();
+
+  for (let i = 0; i < numPairs; i++) {
+    const p1 = document.getElementById(`manualPair_${i}_0`)?.value;
+    const p2 = document.getElementById(`manualPair_${i}_1`)?.value;
+    if (!p1 || !p2) {
+      showToast("Заполните все пары", "error");
+      return;
+    }
+    if (p1 === p2) {
+      showToast("Игроки в паре должны быть разными", "error");
+      return;
+    }
+    if (usedPlayers.has(p1) || usedPlayers.has(p2)) {
+      showToast("Игрок может быть только в одной паре", "error");
+      return;
+    }
+    usedPlayers.add(p1);
+    usedPlayers.add(p2);
+    pairs.push({player1: p1, player2: p2});
+  }
+
+  savePairs(plannedGameId, pairs);
+}
+
+async function savePairs(plannedGameId, pairs) {
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({
+      pairs: pairs,
+      status: 'ready'
+    });
+    showToast("Пары распределены", "success");
+    openPlannedGame(plannedGameId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function createGamesFromPlan(plannedGameId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg || !pg.pairs || pg.status !== 'ready') {
+    showToast("Пары ещё не распределены", "error");
+    return;
+  }
+
+  const user = firebase.auth().currentUser;
+  const pairs = pg.pairs;
+  const numPairs = pairs.length;
+
+  try {
+    if (numPairs === 2) {
+      // One game: 2 pairs
+      await db.collection("padel_games").add({
+        date: pg.date,
+        pair1: [pairs[0].player1, pairs[0].player2],
+        pair2: [pairs[1].player1, pairs[1].player2],
+        sets: [],
+        status: 'active',
+        createdBy: user?.email || 'admin',
+        createdByName: getCreatorName(user),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } else if (numPairs === 4) {
+      // Two games: split 4 pairs into 2 games
+      await db.collection("padel_games").add({
+        date: pg.date,
+        pair1: [pairs[0].player1, pairs[0].player2],
+        pair2: [pairs[1].player1, pairs[1].player2],
+        sets: [],
+        status: 'active',
+        createdBy: user?.email || 'admin',
+        createdByName: getCreatorName(user),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      await db.collection("padel_games").add({
+        date: pg.date,
+        pair1: [pairs[2].player1, pairs[2].player2],
+        pair2: [pairs[3].player1, pairs[3].player2],
+        sets: [],
+        status: 'active',
+        createdBy: user?.email || 'admin',
+        createdByName: getCreatorName(user),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } else if (numPairs === 8) {
+      // Four games: split 8 pairs into 4 games
+      for (let i = 0; i < 4; i++) {
+        await db.collection("padel_games").add({
+          date: pg.date,
+          pair1: [pairs[i * 2].player1, pairs[i * 2].player2],
+          pair2: [pairs[i * 2 + 1].player1, pairs[i * 2 + 1].player2],
+          sets: [],
+          status: 'active',
+          createdBy: user?.email || 'admin',
+          createdByName: getCreatorName(user),
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+    } else {
+      showToast("Неподдерживаемое количество пар для создания игр", "error");
+      return;
+    }
+
+    // Delete planned game after creating games
+    await db.collection("padel_planned_games").doc(plannedGameId).delete();
+    closeModal();
+    showToast("Игры созданы", "success");
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function deletePlannedGame(plannedGameId) {
+  if (!isAdmin) {
+    showToast("Только администратор может удалять", "error");
+    return;
+  }
+
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  if (!isSuperAdmin && !isOrganizer) {
+    showToast("Только организатор или супер-админ может удалить", "error");
+    return;
+  }
+
+  if (!confirm("Удалить запланированную игру?")) return;
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).delete();
+    showToast("Запланированная игра удалена", "success");
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
 }
 
 function openCreateTournamentModal() {
@@ -6829,6 +7620,198 @@ init();
 </div>
 
 <!-- Create Training Modal -->
+
+<div class="modal-overlay" id="planGameModal" onclick="if(event.target===this)closePlanGameModal()">
+  <div class="modal" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
+    <div class="modal-header">
+      <span class="modal-title">📋 Запланировать игру</span>
+      <button class="btn btn-secondary btn-sm" onclick="closePlanGameModal()">✕</button>
+    </div>
+    <div style="padding: 20px;">
+      <div class="form-group">
+        <label class="form-label">Дата</label>
+        <input type="date" class="form-input" id="planGameDate">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Время</label>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <select class="form-select" id="planGameTimeStart" style="flex: 1;">
+            <option value="">Начало...</option>
+            <option value="06:00">06:00</option>
+            <option value="06:15">06:15</option>
+            <option value="06:30">06:30</option>
+            <option value="06:45">06:45</option>
+            <option value="07:00">07:00</option>
+            <option value="07:15">07:15</option>
+            <option value="07:30">07:30</option>
+            <option value="07:45">07:45</option>
+            <option value="08:00">08:00</option>
+            <option value="08:15">08:15</option>
+            <option value="08:30">08:30</option>
+            <option value="08:45">08:45</option>
+            <option value="09:00">09:00</option>
+            <option value="09:15">09:15</option>
+            <option value="09:30">09:30</option>
+            <option value="09:45">09:45</option>
+            <option value="10:00">10:00</option>
+            <option value="10:15">10:15</option>
+            <option value="10:30">10:30</option>
+            <option value="10:45">10:45</option>
+            <option value="11:00">11:00</option>
+            <option value="11:15">11:15</option>
+            <option value="11:30">11:30</option>
+            <option value="11:45">11:45</option>
+            <option value="12:00">12:00</option>
+            <option value="12:15">12:15</option>
+            <option value="12:30">12:30</option>
+            <option value="12:45">12:45</option>
+            <option value="13:00">13:00</option>
+            <option value="13:15">13:15</option>
+            <option value="13:30">13:30</option>
+            <option value="13:45">13:45</option>
+            <option value="14:00">14:00</option>
+            <option value="14:15">14:15</option>
+            <option value="14:30">14:30</option>
+            <option value="14:45">14:45</option>
+            <option value="15:00">15:00</option>
+            <option value="15:15">15:15</option>
+            <option value="15:30">15:30</option>
+            <option value="15:45">15:45</option>
+            <option value="16:00">16:00</option>
+            <option value="16:15">16:15</option>
+            <option value="16:30">16:30</option>
+            <option value="16:45">16:45</option>
+            <option value="17:00">17:00</option>
+            <option value="17:15">17:15</option>
+            <option value="17:30">17:30</option>
+            <option value="17:45">17:45</option>
+            <option value="18:00">18:00</option>
+            <option value="18:15">18:15</option>
+            <option value="18:30">18:30</option>
+            <option value="18:45">18:45</option>
+            <option value="19:00">19:00</option>
+            <option value="19:15">19:15</option>
+            <option value="19:30">19:30</option>
+            <option value="19:45">19:45</option>
+            <option value="20:00">20:00</option>
+            <option value="20:15">20:15</option>
+            <option value="20:30">20:30</option>
+            <option value="20:45">20:45</option>
+            <option value="21:00">21:00</option>
+            <option value="21:15">21:15</option>
+            <option value="21:30">21:30</option>
+            <option value="21:45">21:45</option>
+            <option value="22:00">22:00</option>
+          </select>
+          <span style="color: var(--text-muted);">—</span>
+          <select class="form-select" id="planGameTimeEnd" style="flex: 1;">
+            <option value="">Конец...</option>
+            <option value="06:00">06:00</option>
+            <option value="06:15">06:15</option>
+            <option value="06:30">06:30</option>
+            <option value="06:45">06:45</option>
+            <option value="07:00">07:00</option>
+            <option value="07:15">07:15</option>
+            <option value="07:30">07:30</option>
+            <option value="07:45">07:45</option>
+            <option value="08:00">08:00</option>
+            <option value="08:15">08:15</option>
+            <option value="08:30">08:30</option>
+            <option value="08:45">08:45</option>
+            <option value="09:00">09:00</option>
+            <option value="09:15">09:15</option>
+            <option value="09:30">09:30</option>
+            <option value="09:45">09:45</option>
+            <option value="10:00">10:00</option>
+            <option value="10:15">10:15</option>
+            <option value="10:30">10:30</option>
+            <option value="10:45">10:45</option>
+            <option value="11:00">11:00</option>
+            <option value="11:15">11:15</option>
+            <option value="11:30">11:30</option>
+            <option value="11:45">11:45</option>
+            <option value="12:00">12:00</option>
+            <option value="12:15">12:15</option>
+            <option value="12:30">12:30</option>
+            <option value="12:45">12:45</option>
+            <option value="13:00">13:00</option>
+            <option value="13:15">13:15</option>
+            <option value="13:30">13:30</option>
+            <option value="13:45">13:45</option>
+            <option value="14:00">14:00</option>
+            <option value="14:15">14:15</option>
+            <option value="14:30">14:30</option>
+            <option value="14:45">14:45</option>
+            <option value="15:00">15:00</option>
+            <option value="15:15">15:15</option>
+            <option value="15:30">15:30</option>
+            <option value="15:45">15:45</option>
+            <option value="16:00">16:00</option>
+            <option value="16:15">16:15</option>
+            <option value="16:30">16:30</option>
+            <option value="16:45">16:45</option>
+            <option value="17:00">17:00</option>
+            <option value="17:15">17:15</option>
+            <option value="17:30">17:30</option>
+            <option value="17:45">17:45</option>
+            <option value="18:00">18:00</option>
+            <option value="18:15">18:15</option>
+            <option value="18:30">18:30</option>
+            <option value="18:45">18:45</option>
+            <option value="19:00">19:00</option>
+            <option value="19:15">19:15</option>
+            <option value="19:30">19:30</option>
+            <option value="19:45">19:45</option>
+            <option value="20:00">20:00</option>
+            <option value="20:15">20:15</option>
+            <option value="20:30">20:30</option>
+            <option value="20:45">20:45</option>
+            <option value="21:00">21:00</option>
+            <option value="21:15">21:15</option>
+            <option value="21:30">21:30</option>
+            <option value="21:45">21:45</option>
+            <option value="22:00">22:00</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Локация</label>
+        <div style="display: flex; gap: 8px;">
+          <select class="form-select" id="planGameLocation" style="flex: 1;">
+            <option value="">Выберите локацию...</option>
+          </select>
+          <button class="btn btn-secondary" onclick="showAddPlanGameLocationInput()">+</button>
+        </div>
+        <div id="addPlanGameLocationWrap" style="display: none; margin-top: 8px; gap: 8px;">
+          <input type="text" class="form-input" id="newPlanGameLocationName" placeholder="Название локации">
+          <button class="btn btn-primary" onclick="addPlanGameLocation()">Добавить</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Количество мест</label>
+        <select class="form-select" id="planGameSlotsCount" onchange="renderPlanGameSlotInputs()">
+          <option value="4">4 (2 пары)</option>
+          <option value="6">6 (3 пары)</option>
+          <option value="8" selected>8 (4 пары)</option>
+          <option value="10">10 (5 пар)</option>
+          <option value="12">12 (6 пар)</option>
+          <option value="16">16 (8 пар)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Участники (опционально)</label>
+        <div id="planGameSlotInputs"></div>
+      </div>
+
+      <button class="btn btn-primary" style="width: 100%;" onclick="createPlannedGame()">📋 Запланировать игру</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="createTrainingModal" onclick="if(event.target===this)closeCreateTrainingModal()">
   <div class="modal" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
     <div class="modal-header">
