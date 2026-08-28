@@ -1873,7 +1873,7 @@ const FIREBASE_CONFIG = {
 const SUPER_ADMIN_LOGIN = "6585875box";
 const SUPER_ADMIN_PASS = "Kluha082";
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "27.08.2026/3";
+const SITE_VERSION = "29.08.2026/7";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -1987,8 +1987,8 @@ function init() {
     subscribeToTournaments();
     subscribeToGames();
     subscribeToTrainings();
-        subscribeToPlannedGames();
-    subscribeToTrainingMeta();
+    subscribeToPlannedGames();
+    // subscribeToTrainingMeta() moved to handleAuthStateChanged (requires auth)
 
     auth.onAuthStateChanged(handleAuthStateChanged);
 
@@ -2084,6 +2084,7 @@ function handleAuthStateChanged(user) {
 
   if (user) {
     subscribeToUserStatus(user);
+    subscribeToTrainingMeta(); // Load training meta after auth is ready
     checkUserStatus().then(() => {
       authReady = true;
       updateUI();
@@ -3156,6 +3157,9 @@ function renderTournaments() {
     const date = t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-';
     const statusClass = t.status === 'finished' ? 'status-finished' : t.status === 'active' ? 'status-active' : 'status-upcoming';
     const statusText = t.status === 'finished' ? 'Завершен' : t.status === 'active' ? 'Идет' : 'Предстоит';
+    const slots = t.slots || [];
+    const bookedCount = slots.filter(s => s.playerId).length;
+    const totalSlots = t.totalSlots || t.playerIds?.length || 0;
 
     html += `
       <div class="card" style="position: relative;">
@@ -3165,11 +3169,11 @@ function renderTournaments() {
             <span class="status-badge ${statusClass}">${statusText}</span>
           </div>
           <div style="font-size: 13px; color: var(--text-muted); padding-right: 32px;">
-            📅 ${date} · 👤 ${t.playerIds?.length || 0} игроков · ${t.type === 'roundrobin' ? '🔄 Round Robin' : `🇺🇸 Americano · ${t.pointsPerMatch || 24} очка`}
+            📅 ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} · 📍 ${escapeHtml(t.location || '—')}${t.comment ? ' · 💬 ' + escapeHtml(t.comment) : ''} · 👤 ${bookedCount}/${totalSlots} игроков · ${t.type === 'roundrobin' ? '🔄 Round Robin' : `🇺🇸 Americano · ${t.pointsPerMatch || 24} очка`}
             ${t.createdByName ? `<br>👤 Организатор: ${escapeHtml(t.createdByName)}` : ''}
           </div>
         </div>
-        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:4px;" onclick="deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
+        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:8px; min-width:36px; min-height:36px; display:flex; align-items:center; justify-content:center; z-index:2;" onclick="event.stopPropagation(); deleteTournament('${t.id}')" title="Удалить">🗑️</div>` : ''}
       </div>
     `;
   });
@@ -3185,18 +3189,184 @@ function openTournament(id) {
   const modal = document.getElementById('tournamentModal');
   const content = document.getElementById('modalContent');
 
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizerOrAdmin = isAdmin || (t.createdBy && t.createdBy === userEmail);
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+
+  // Compute slots status
+  const slots = t.slots || [];
+  const bookedCount = slots.filter(s => s.playerId).length;
+  const totalSlots = t.totalSlots || (t.type === 'roundrobin' ? (t.pairs?.length || 4) * 2 : (t.playerIds?.length || 8));
+  const isFull = totalSlots > 0 && bookedCount >= totalSlots;
+  const endDateTime = new Date((t.date || '') + 'T' + (t.timeEnd || t.timeStart || '23:59'));
+  const isPast = endDateTime < new Date();
+
   let html = '';
 
   // Info
   html += `<div style="margin-bottom: 20px; color: var(--text-secondary); font-size: 14px;">
-    📅 ${t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-'} ·
-    👤 ${t.playerIds?.length || 0} игроков ·
+    📅 ${t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-'}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} ·
+    📍 ${escapeHtml(t.location || '—')}${t.comment ? ' · 💬 ' + escapeHtml(t.comment) : ''} ·
+    👤 ${bookedCount}/${t.totalSlots || t.playerIds?.length || 0} игроков ·
     ${t.type === 'roundrobin' ? '🔄 Round Robin' : `🇺🇸 Americano · ${t.pointsPerMatch || 24} очка за матч`}
     ${t.createdByName ? '<br>👤 Организатор: ' + escapeHtml(t.createdByName) : ''}
   </div>`;
 
+  // Slots display
+  let slotsHtml = '';
+  if (slots.length > 0) {
+    slots.forEach((slot, idx) => {
+      const infoBtn = (isOrganizerOrAdmin && slot.playerId)
+        ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${slot.playerId}', '${escapeHtml(slot.playerName || '')}')" title="Контактные данные">ℹ️</span>`
+        : '';
+      if (isOrganizerOrAdmin && t.status !== 'finished') {
+        const currentPlayer = players.find(p => p.id === slot.playerId);
+        const currentValue = slot.playerId || '';
+        const currentName = slot.playerName || '';
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span>Слот ${idx + 1}${infoBtn}</span>
+          <div style="display: flex; align-items: center; gap: 8px; position: relative;">
+            <div style="position: relative; width: 200px;">
+              <input type="text" class="form-input game-player-search" id="tournamentSlot_${idx}_name" value="${escapeHtml(currentName)}" placeholder="🔍 Поиск игрока..." oninput="onTournamentSlotSearch('${id}', ${idx})" onfocus="onTournamentSlotSearch('${id}', ${idx})" style="width: 100%;">
+              <input type="hidden" id="tournamentSlot_${idx}_id" value="${escapeHtml(currentValue)}">
+              <div class="game-player-dropdown" id="tournamentSlot_${idx}_dropdown"></div>
+            </div>
+            ${currentValue ? `<span style="cursor:pointer; font-size:16px; padding: 4px;" onclick="changeTournamentPlayer('${id}', ${idx}, '')" title="Очистить слот">🗑️</span>` : '<span style="width: 24px;"></span>'}
+          </div>
+        </div>`;
+      } else if (slot.playerId) {
+        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <span>Слот ${idx + 1}${infoBtn}</span>
+          <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
+        </div>`;
+      } else {
+        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <span>Слот ${idx + 1}</span>
+          <span style="color: var(--accent);">✓ Свободно</span>
+        </div>`;
+      }
+    });
+  }
+
+  // Applications section
+  const applications = t.applications || [];
+  const alreadyApplied = applications.some(a => a.playerId === userEmail || a.playerId === currentUserData?.playerId);
+  const alreadyBooked = slots.some(s => s.playerId && (s.playerId === userEmail || s.playerId === currentUserData?.playerId));
+  const mySlotIndex = alreadyBooked ? slots.findIndex(s => s.playerId === userEmail || s.playerId === currentUserData?.playerId) : -1;
+
+  let applicationsHtml = '';
+  if (applications.length > 0 || isOrganizerOrAdmin) {
+    const appsList = applications.length > 0
+      ? applications.map((app, idx) => {
+          const canConfirm = isOrganizerOrAdmin && !isFull && t.status !== 'finished';
+          const appInfoBtn = (isOrganizerOrAdmin && app.playerId)
+            ? `<span style="cursor:pointer; font-size:14px; padding:4px; margin-left:4px;" onclick="showSlotPlayerInfo('${app.playerId}', '${escapeHtml(app.playerName)}')" title="Контактные данные">ℹ️</span>`
+            : '';
+          return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+            <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
+            ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmTournamentApplication('${id}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
+          </div>`;
+        }).join('')
+      : '<div style="padding: 8px 0; color: var(--text-muted); font-size: 13px;">Пока нет заявок</div>';
+
+    applicationsHtml = `
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">📝 Заявки (${applications.length})</div>
+        <div style="background: var(--bg-secondary); border-radius: 8px; padding: 0 12px;">
+          ${appsList}
+        </div>
+      </div>
+    `;
+  }
+
+  // Self-booking buttons (for all users including organizer/admin if not booked)
+  let bookingButtonsHtml = '';
+  if (t.status !== 'finished' && !isPast) {
+    if (alreadyBooked) {
+      bookingButtonsHtml = `<div style="margin-bottom: 16px;">
+        <button class="btn btn-secondary" style="width: 100%;" onclick="cancelTournamentBooking('${id}')">❌ Отменить участие</button>
+      </div>`;
+    } else if (alreadyApplied) {
+      bookingButtonsHtml = `<div style="margin-bottom: 16px;">
+        <button class="btn btn-secondary" style="width: 100%;" onclick="cancelTournamentApplication('${id}')">❌ Отменить заявку</button>
+      </div>`;
+    } else if (!isFull) {
+      bookingButtonsHtml = `<div style="margin-bottom: 16px;">
+        <button class="btn btn-primary" style="width: 100%;" onclick="applyForTournament('${id}')">✋ Подать заявку</button>
+      </div>`;
+    }
+  }
+
+  const hasSchedule = t.schedule && t.schedule.length > 0;
+
+  // Show slots/applications/booking only when tournament hasn't started
+  if (!hasSchedule) {
+    html += bookingButtonsHtml;
+    html += applicationsHtml;
+
+    html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">👥 Участники (${bookedCount}/${t.totalSlots || t.playerIds?.length || 0})</div>
+      ${slotsHtml}
+    </div>`;
+
+    // Round Robin pairs display/edit
+    if (t.type === 'roundrobin') {
+      const pairCount = t.pairs?.length || (t.totalSlots / 2) || 0;
+      if (pairCount > 0) {
+        let pairsDisplayHtml = '';
+        const slotPlayerIds = slots.filter(s => s.playerId).map(s => s.playerId);
+        
+        if (editingPairs && editingPairsTournamentId === t.id && isOrganizerOrAdmin) {
+          // Edit mode
+          for (let i = 0; i < pairCount; i++) {
+            const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
+            pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
+              <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
+              <select class="form-input" id="pair_edit_${t.id}_${i}_0" style="flex: 1;">
+                <option value="">Выберите игрока...</option>
+                ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[0] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
+              </select>
+              <span style="color: var(--text-muted)">+</span>
+              <select class="form-input" id="pair_edit_${t.id}_${i}_1" style="flex: 1;">
+                <option value="">Выберите игрока...</option>
+                ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[1] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
+              </select>
+            </div>`;
+          }
+          html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">🔗 Редактирование пар</div>
+            ${pairsDisplayHtml}
+            <div style="display: flex; gap: 8px; margin-top: 12px;">
+              <button class="btn btn-primary" style="flex: 1;" onclick="savePairsChanges('${t.id}')">💾 Сохранить пары</button>
+              <button class="btn btn-secondary" style="flex: 1;" onclick="toggleEditPairs('${t.id}')">❌ Отменить</button>
+            </div>
+          </div>`;
+        } else {
+          // View mode
+          for (let i = 0; i < pairCount; i++) {
+            const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
+            const p1Name = pair.playerIds[0] ? getPlayerNameById(pair.playerIds[0]) : '—';
+            const p2Name = pair.playerIds[1] ? getPlayerNameById(pair.playerIds[1]) : '—';
+            pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
+              <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
+              <span style="flex: 1; text-align: center;">${escapeHtml(p1Name)} + ${escapeHtml(p2Name)}</span>
+            </div>`;
+          }
+          html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <div style="font-size: 14px; font-weight: 600;">🔗 Пары</div>
+              ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary btn-sm" onclick="toggleEditPairs('${t.id}')">✏️ Редактировать</button>` : ''}
+            </div>
+            ${pairsDisplayHtml}
+            ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="autoAssignPairs('${t.id}')">🎲 Авто-распределение</button>` : ''}
+          </div>`;
+        }
+      }
+    }
+  }
+
   // Schedule
-  if (t.schedule && t.schedule.length > 0) {
+  if (t.schedule && t.schedule.length > 0 && (t.status === 'active' || t.status === 'finished')) {
     html += '<h3 style="font-size: 18px; margin-bottom: 16px;">📋 Расписание</h3>';
 
     t.schedule.forEach((round, rIdx) => {
@@ -3204,8 +3374,6 @@ function openTournament(id) {
       html += `<div class="round-header"><span class="round-num">Раунд ${rIdx + 1}</span></div>`;
 
       round.forEach((match, mIdx) => {
-        const team1 = match.team1.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
-        const team2 = match.team2.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
         const score1 = t.scores?.[`${rIdx}_${mIdx}_0`] || '';
         const score2 = t.scores?.[`${rIdx}_${mIdx}_1`] || '';
         const isEditing = editingSchedule && editingTournamentId === t.id;
@@ -3214,27 +3382,43 @@ function openTournament(id) {
           <span class="match-court">Корт ${match.court}</span>`;
 
         if (isEditing) {
-          // Режим редактирования - select'ы для игроков
           const makeSelect = (teamIdx, playerIdx, val) => {
             let opts = t.playerIds.map((pid, idx) => `<option value="${idx}" ${idx === val ? 'selected' : ''}>${getPlayerNameById(pid)}</option>`).join('');
             return `<select class="form-input" style="padding:4px 8px; font-size:13px; min-width:120px;" id="edit_${t.id}_${rIdx}_${mIdx}_${teamIdx}_${playerIdx}">${opts}</select>`;
           };
-          html += `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <div style="display:flex; gap:4px;">${makeSelect(0, 0, match.team1[0])} & ${makeSelect(0, 1, match.team1[1])}</div>
-            <span class="vs">VS</span>
-            <div style="display:flex; gap:4px;">${makeSelect(1, 0, match.team2[0])} & ${makeSelect(1, 1, match.team2[1])}</div>
-          </div>`;
+          // For round robin, use pair players; for americano, use player indices
+          if (t.type === 'roundrobin' && t.pairs) {
+            const pair1 = t.pairs.find(p => p.id === match.pair1Id);
+            const pair2 = t.pairs.find(p => p.id === match.pair2Id);
+            const p1Idx0 = pair1 ? t.playerIds.indexOf(pair1.playerIds[0]) : 0;
+            const p1Idx1 = pair1 ? t.playerIds.indexOf(pair1.playerIds[1]) : 0;
+            const p2Idx0 = pair2 ? t.playerIds.indexOf(pair2.playerIds[0]) : 0;
+            const p2Idx1 = pair2 ? t.playerIds.indexOf(pair2.playerIds[1]) : 0;
+            html += `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <div style="display:flex; gap:4px;">${makeSelect(0, 0, p1Idx0)} & ${makeSelect(0, 1, p1Idx1)}</div>
+              <span class="vs">VS</span>
+              <div style="display:flex; gap:4px;">${makeSelect(1, 0, p2Idx0)} & ${makeSelect(1, 1, p2Idx1)}</div>
+            </div>`;
+          } else {
+            html += `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <div style="display:flex; gap:4px;">${makeSelect(0, 0, match.team1 ? match.team1[0] : 0)} & ${makeSelect(0, 1, match.team1 ? match.team1[1] : 1)}</div>
+              <span class="vs">VS</span>
+              <div style="display:flex; gap:4px;">${makeSelect(1, 0, match.team2 ? match.team2[0] : 2)} & ${makeSelect(1, 1, match.team2 ? match.team2[1] : 3)}</div>
+            </div>`;
+          }
         } else {
           let team1, team2;
           if (t.type === 'roundrobin' && t.pairs) {
-            // For Round Robin, show pair names or player names
             const pair1 = t.pairs.find(p => p.id === match.pair1Id);
             const pair2 = t.pairs.find(p => p.id === match.pair2Id);
             team1 = pair1 ? pair1.playerIds.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
             team2 = pair2 ? pair2.playerIds.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
-          } else {
+          } else if (match.team1 && Array.isArray(match.team1)) {
             team1 = match.team1.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
             team2 = match.team2.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
+          } else {
+            team1 = match.pair1Players ? match.pair1Players.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
+            team2 = match.pair2Players ? match.pair2Players.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
           }
           html += `<div class="team"><span class="team-players">${team1}</span></div>
           <span class="vs">VS</span>
@@ -3243,7 +3427,6 @@ function openTournament(id) {
 
         if (!isEditing && canEdit(t)) {
           if (t.scoringSystem === 'tennis') {
-            // Tennis scoring: score picker for Round Robin
             const s1 = score1 !== '' ? score1 : '';
             const s2 = score2 !== '' ? score2 : '';
             html += `<div style="display:flex; gap:8px; align-items:center; cursor:pointer;" onclick="openTennisScorePicker('${t.id}', ${rIdx}, ${mIdx}, '${match.pair1Id}', '${match.pair2Id}')">
@@ -3257,7 +3440,7 @@ function openTournament(id) {
             html += `<div style="display:flex; gap:8px; align-items:center; cursor:pointer;" onclick="openScorePicker('${t.id}', ${rIdx}, ${mIdx}, ${points})">
               <span style="font-weight:800; font-size:18px; color:var(--accent); min-width:40px; text-align:center; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:6px 12px;">${score1 !== '' ? score1 : '-'}</span>
               <span style="color:var(--text-muted)">:</span>
-              <span style="font-weight:800; font-size:18px; color:var(--accent); min-width:40px; text-align:center;">${autoScore2 !== '' ? autoScore2 : '-'}</span>
+            <span style="font-weight:800; font-size:18px; color:var(--accent); min-width:40px; text-align:center;">${autoScore2 !== '' ? autoScore2 : '-'}</span>
             </div>`;
           }
         } else if (!isEditing && score1 !== '' && score2 !== '') {
@@ -3271,6 +3454,31 @@ function openTournament(id) {
     });
   }
 
+  // Winners (for finished tournaments)
+  if (t.status === 'finished' && t.winners) {
+    html += '<h3 style="font-size: 18px; margin: 24px 0 16px;">🏆 Победители</h3>';
+    html += '<div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">';
+    
+    const medals = ['🥇', '🥈', '🥉'];
+    for (let i = 0; i < 3; i++) {
+      const winnerEntry = t.winners[i + 1];
+      if (!winnerEntry) continue;
+      
+      const playerIds = Array.isArray(winnerEntry) ? winnerEntry : [winnerEntry];
+      const names = playerIds.map(pid => getPlayerNameById(pid)).join(' & ');
+      
+      html += `<div class="card" style="padding: 16px; display: flex; align-items: center; gap: 16px; background: ${i === 0 ? 'linear-gradient(135deg, #FFD70022, #FFA50022)' : i === 1 ? 'linear-gradient(135deg, #C0C0C022, #A0A0A022)' : 'linear-gradient(135deg, #CD7F3222, #B8733322)'}; border: 1px solid ${i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : '#CD7F32'};">
+        <span style="font-size: 32px;">${medals[i]}</span>
+        <div>
+          <div style="font-size: 18px; font-weight: 700;">${escapeHtml(names)}</div>
+          <div style="font-size: 12px; color: var(--text-muted);">${i === 0 ? 'Победитель' : i === 1 ? '2-е место' : '3-е место'}</div>
+        </div>
+      </div>`;
+    }
+    
+    html += '</div>';
+  }
+
   // Leaderboard
   if (t.type === 'roundrobin' && t.pairLeaderboard && t.pairLeaderboard.length > 0) {
     html += '<h3 style="font-size: 18px; margin: 24px 0 16px;">🏆 Турнирная таблица (пары)</h3>';
@@ -3278,12 +3486,12 @@ function openTournament(id) {
 
     t.pairLeaderboard.forEach((entry, idx) => {
       const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
-      const players = entry.playerIds.map(pid => getPlayerNameById(pid)).join(' & ');
+      const playersNames = entry.playerIds.map(pid => getPlayerNameById(pid)).join(' & ');
       const pairStats = `Игры ${entry.wins}-${entry.losses} | Очки ${entry.gamesFor}-${entry.gamesAgainst}`;
       const diff = entry.gameDiff > 0 ? `+${entry.gameDiff}` : entry.gameDiff;
       html += `<div class="leaderboard-row">
         <span class="leaderboard-rank">${medal || (idx + 1)}</span>
-        <span class="leaderboard-player">${players}<br><small style="color:var(--text-muted);font-size:12px">${pairStats}</small></span>
+        <span class="leaderboard-player">${playersNames}<br><small style="color:var(--text-muted);font-size:12px">${pairStats}</small></span>
         <span class="leaderboard-score">${diff}</span>
       </div>`;
     });
@@ -3309,11 +3517,10 @@ function openTournament(id) {
   if (canEdit(t) && t.status === 'finished') {
     html += `<div style="margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap;">
       <button class="btn btn-primary" onclick="recalculateTournament('${t.id}')">🔄 Пересчитать итоги</button>
-      <button class="btn btn-secondary" onclick="toggleEditSchedule('${t.id}')">✏️ Редактировать пары</button>
     </div>`;
   }
 
-  // Admin/creator actions for active tournaments
+  // Admin/creator actions for active/upcoming tournaments
   if (canEdit(t) && t.status !== 'finished') {
     if (editingSchedule && editingTournamentId === t.id) {
       html += `<div style="margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap;">
@@ -3321,10 +3528,16 @@ function openTournament(id) {
         <button class="btn btn-secondary" onclick="toggleEditSchedule('${t.id}')">❌ Отменить</button>
       </div>`;
     } else {
-      html += `<div style="margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-primary" onclick="finalizeTournament('${t.id}')">🏁 Завершить турнир</button>
-        <button class="btn btn-secondary" onclick="toggleEditSchedule('${t.id}')">✏️ Редактировать пары</button>
-        <button class="btn btn-danger" onclick="deleteTournament('${t.id}')">🗑 Удалить</button>
+      const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+      const allSlotsFilled = slotPlayerIds.length >= (t.totalSlots || 0) && t.totalSlots > 0;
+      const hasSchedule = t.schedule && t.schedule.length > 0;
+      html += `<div style="margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap;">`;
+      if (!hasSchedule && allSlotsFilled) {
+        html += `<button class="btn btn-primary" onclick="startTournament('${t.id}')">🚀 Начать турнир</button>`;
+      } else if (hasSchedule) {
+        html += `<button class="btn btn-primary" onclick="finalizeTournament('${t.id}')">🏁 Завершить турнир</button>`;
+      }
+      html += `<button class="btn btn-danger" onclick="event.stopPropagation(); deleteTournament('${t.id}')">🗑 Удалить</button>
       </div>`;
     }
   }
@@ -3348,6 +3561,84 @@ function toggleEditSchedule(tournamentId) {
   openTournament(tournamentId);
 }
 
+// Edit tournament pairs (for Round Robin)
+let editingPairs = false;
+let editingPairsTournamentId = null;
+
+function toggleEditPairs(tournamentId) {
+  if (editingPairs && editingPairsTournamentId === tournamentId) {
+    editingPairs = false;
+    editingPairsTournamentId = null;
+  } else {
+    editingPairs = true;
+    editingPairsTournamentId = tournamentId;
+  }
+  openTournament(tournamentId);
+}
+
+async function savePairsChanges(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || !t.pairs) return;
+
+  const newPairs = t.pairs.map((pair, idx) => {
+    const p1 = document.getElementById(`pair_edit_${tournamentId}_${idx}_0`)?.value;
+    const p2 = document.getElementById(`pair_edit_${tournamentId}_${idx}_1`)?.value;
+    return {
+      id: pair.id,
+      playerIds: [p1, p2],
+      name: pair.name || `Пара ${idx + 1}`
+    };
+  });
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      pairs: newPairs
+    });
+    showToast("Пары обновлены", "success");
+    editingPairs = false;
+    editingPairsTournamentId = null;
+    await loadTournaments();
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function autoAssignPairs(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || t.type !== 'roundrobin') return;
+
+  const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+  const pairCount = t.pairs?.length || (t.totalSlots / 2);
+
+  if (slotPlayerIds.length < pairCount * 2) {
+    showToast(`Недостаточно игроков. Заполнено ${slotPlayerIds.length} из ${pairCount * 2} слотов`, "error");
+    return;
+  }
+
+  // Shuffle and form pairs
+  const shuffled = [...slotPlayerIds].sort(() => Math.random() - 0.5);
+  const newPairs = [];
+  for (let i = 0; i < pairCount; i++) {
+    newPairs.push({
+      id: 'pair_' + i,
+      playerIds: [shuffled[i * 2], shuffled[i * 2 + 1]],
+      name: `Пара ${i + 1}`
+    });
+  }
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      pairs: newPairs
+    });
+    showToast("Пары распределены автоматически", "success");
+    await loadTournaments();
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
 async function saveScheduleChanges(tournamentId) {
   const t = tournaments.find(x => x.id === tournamentId);
   if (!t || !t.schedule) return;
@@ -3368,7 +3659,7 @@ async function saveScheduleChanges(tournamentId) {
 
   try {
     await db.collection("padel_tournaments").doc(tournamentId).update({
-      schedule: newSchedule
+      scheduleData: JSON.stringify(newSchedule)
     });
     t.schedule = newSchedule;
     editingSchedule = false;
@@ -3409,6 +3700,7 @@ function onTournamentTypeChange() {
     sizeGroup.style.display = 'block';
     rrSizeGroup.style.display = 'none';
   }
+  renderTournamentSlotInputs();
 }
 
 function onScoringSystemChange() {
@@ -3537,9 +3829,25 @@ function checkPairFormationReady() {
   }
 }
 
+function getTournamentSlotPlayerIds() {
+  const type = document.getElementById('tournamentType').value;
+  let size = 8;
+  if (type === 'roundrobin') {
+    size = (parseInt(document.getElementById('rrPairCount').value) || 4) * 2;
+  } else {
+    size = parseInt(document.getElementById('tournamentSize').value) || 8;
+  }
+  const ids = [];
+  for (let i = 0; i < size; i++) {
+    const select = document.getElementById(`tournamentSlot_${i}`);
+    if (select && select.value) ids.push(select.value);
+  }
+  return ids;
+}
+
 function renderPairFormation() {
   const container = document.getElementById('rrPairsList');
-  const playerIds = Array.from(selectedPlayersForTournament);
+  const playerIds = getTournamentSlotPlayerIds();
   const pairCount = parseInt(document.getElementById('rrPairCount').value);
 
   let html = '';
@@ -3570,13 +3878,19 @@ function updatePair(pairIdx, playerIdx, playerId) {
 }
 
 function autoFormPairs() {
-  const playerIds = Array.from(selectedPlayersForTournament);
+  const playerIds = getTournamentSlotPlayerIds();
   const pairCount = parseInt(document.getElementById('rrPairCount').value);
+  if (playerIds.length < pairCount * 2) {
+    showToast(`Заполните все слоты (${pairCount * 2} игроков) для авто-формирования пар`, "error");
+    return;
+  }
+  // Shuffle
+  const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
   rrPairs = [];
   for (let i = 0; i < pairCount; i++) {
     rrPairs.push({
       id: 'pair_' + i,
-      playerIds: [playerIds[i * 2], playerIds[i * 2 + 1]],
+      playerIds: [shuffled[i * 2], shuffled[i * 2 + 1]],
       name: `Пара ${i + 1}`
     });
   }
@@ -3589,45 +3903,65 @@ async function createTournament() {
   locks.createTournament = true;
   const name = document.getElementById('tournamentName').value.trim();
   const date = document.getElementById('tournamentDate').value;
+  const timeStart = document.getElementById('tournamentTimeStart').value;
+  const timeEnd = document.getElementById('tournamentTimeEnd').value;
+  const location = document.getElementById('tournamentLocation').value;
+  const comment = document.getElementById('tournamentComment').value.trim();
   const type = document.getElementById('tournamentType').value;
   const scoringSystem = document.getElementById('scoringSystem').value;
 
-  if (!name) { showToast("Введите название турнира", "error"); return; }
-  if (!date) { showToast("Выберите дату", "error"); return; }
+  if (!name) { showToast("Введите название турнира", "error"); locks.createTournament = false; return; }
+  if (!date) { showToast("Выберите дату", "error"); locks.createTournament = false; return; }
+  if (!location) { showToast("Выберите локацию", "error"); locks.createTournament = false; return; }
 
-  const playerIds = Array.from(selectedPlayersForTournament);
+  // Collect slots from selects
   let size, schedule, pairsData = null, points = 24;
-
   if (type === 'americano') {
     size = parseInt(document.getElementById('tournamentSize').value);
     points = parseInt(document.getElementById('tournamentPoints').value);
-    if (playerIds.length !== size) {
-      showToast(`Для турнира на ${size} игроков нужно выбрать ровно ${size} игроков (выбрано ${playerIds.length})`, "error");
-      return;
+  } else {
+    const pairCount = parseInt(document.getElementById('rrPairCount').value);
+    size = pairCount * 2;
+    if (scoringSystem === 'points') {
+      points = parseInt(document.getElementById('tournamentPoints').value);
     }
+  }
+
+  const slots = [];
+  const playerIds = [];
+  for (let i = 0; i < size; i++) {
+    const select = document.getElementById(`tournamentSlot_${i}`);
+    const playerId = select ? select.value : '';
+    if (playerId) {
+      const player = players.find(p => p.id === playerId);
+      slots.push({ playerId, playerName: player ? player.name : '', bookedAt: new Date().toISOString() });
+      playerIds.push(playerId);
+    } else {
+      slots.push({ playerId: null, playerName: null, bookedAt: null });
+    }
+  }
+
+  if (type === 'americano') {
     schedule = generateSchedule(playerIds.length);
     if (!schedule) {
       showToast("Ошибка генерации расписания", "error");
+      locks.createTournament = false;
       return;
     }
   } else {
     // Round Robin
     const pairCount = parseInt(document.getElementById('rrPairCount').value);
-    size = pairCount * 2;
-    if (playerIds.length !== size) {
-      showToast(`Для Round Robin на ${pairCount} пары нужно ровно ${size} игроков (выбрано ${playerIds.length})`, "error");
-      return;
+    // Validate all pairs are formed only if all slots filled
+    const allFilled = slots.every(s => s.playerId);
+    if (allFilled) {
+      if (rrPairs.length !== pairCount || rrPairs.some(p => !p.playerIds[0] || !p.playerIds[1])) {
+        showToast("Сформируйте все пары перед созданием турнира", "error");
+        locks.createTournament = false;
+        return;
+      }
+      pairsData = rrPairs.map(p => ({ id: p.id, playerIds: p.playerIds, name: p.name }));
+      schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
     }
-    // Validate all pairs are formed
-    if (rrPairs.length !== pairCount || rrPairs.some(p => !p.playerIds[0] || !p.playerIds[1])) {
-      showToast("Сформируйте все пары перед созданием турнира", "error");
-      return;
-    }
-    pairsData = rrPairs.map(p => ({ id: p.id, playerIds: p.playerIds, name: p.name }));
-    if (scoringSystem === 'points') {
-      points = parseInt(document.getElementById('tournamentPoints').value);
-    }
-    schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
   }
 
   const btn = document.getElementById('createTournamentBtn');
@@ -3638,16 +3972,23 @@ async function createTournament() {
     const docData = {
       name: name,
       date: date,
+      timeStart: timeStart || null,
+      timeEnd: timeEnd || null,
+      location: location,
+      comment: comment || null,
       type: type,
       scoringSystem: scoringSystem,
       playerIds: playerIds,
+      slots: slots,
+      totalSlots: size,
+      applications: [],
       pointsPerMatch: points,
-      scheduleData: JSON.stringify(schedule),
+      scheduleData: schedule ? JSON.stringify(schedule) : null,
       scores: {},
       status: 'upcoming',
       leaderboard: [],
-      createdBy: currentUser.email,
-      createdByName: getCurrentUserFullName() || currentUser.email,
+      createdBy: (currentUser.email || '').toLowerCase(),
+      createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     };
 
@@ -3657,7 +3998,7 @@ async function createTournament() {
 
     const docRef = await db.collection("padel_tournaments").add(docData);
 
-    // Update player tournament counts (only if admin - skip for regular users)
+    // Update player tournament counts
     try {
       for (const pid of playerIds) {
         const pRef = db.collection("padel_players").doc(pid);
@@ -3672,13 +4013,11 @@ async function createTournament() {
     showToast("Турнир создан!", "success");
     document.getElementById('tournamentName').value = '';
     document.getElementById('tournamentDate').value = '';
-    selectedPlayersForTournament.clear();
+    document.getElementById('tournamentTimeStart').value = '';
+    document.getElementById('tournamentTimeEnd').value = '';
+    document.getElementById('tournamentComment').value = '';
     rrPairs = [];
     document.getElementById('rrPairFormation').style.display = 'none';
-    // Reset search
-    const searchInput = document.getElementById('playerSearchInput');
-    if (searchInput) searchInput.value = '';
-    renderPlayerSelect();
 
     await loadTournaments();
     await loadPlayers();
@@ -3747,10 +4086,12 @@ function generateRoundRobinSchedule(pairs, numCourts) {
       const m = allMatches[matchIdx];
       round.push({
         court: c + 1,
-        team1: m.team1.playerIds,
-        team2: m.team2.playerIds,
         pair1Id: m.team1.id,
-        pair2Id: m.team2.id
+        pair2Id: m.team2.id,
+        pair1Name: m.team1.name,
+        pair2Name: m.team2.name,
+        pair1Players: m.team1.playerIds || [],
+        pair2Players: m.team2.playerIds || []
       });
       matchIdx++;
     }
@@ -4107,8 +4448,79 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
   }
 }
 
+async function startTournament(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+  if (!canEdit(t)) {
+    showToast("Только организатор или админ может начать турнир", "error");
+    return;
+  }
+
+  const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+  const totalSlots = t.totalSlots || (t.type === 'roundrobin' ? (t.pairs?.length || 4) * 2 : (t.playerIds?.length || 8));
+  if (totalSlots > 0 && slotPlayerIds.length < totalSlots) {
+    showToast("Не все слоты заполнены", "error");
+    return;
+  }
+
+  try {
+    let schedule = null;
+    let pairsData = t.pairs || null;
+
+    if (t.type === 'americano') {
+      schedule = generateSchedule(slotPlayerIds.length);
+    } else if (t.type === 'roundrobin') {
+      // Auto-form pairs if not set
+      if (!pairsData || pairsData.length === 0) {
+        const pairCount = totalSlots / 2;
+        pairsData = [];
+        for (let i = 0; i < pairCount; i++) {
+          pairsData.push({
+            id: 'pair_' + i,
+            playerIds: [slotPlayerIds[i * 2], slotPlayerIds[i * 2 + 1]],
+            name: `Пара ${i + 1}`
+          });
+        }
+      }
+      const pairCount = pairsData.length;
+      schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
+    }
+
+    if (!schedule) {
+      showToast("Ошибка генерации расписания", "error");
+      return;
+    }
+
+    const updateData = {
+      scheduleData: JSON.stringify(schedule),
+      playerIds: slotPlayerIds,
+      status: 'active'
+    };
+    if (pairsData) {
+      updateData.pairs = pairsData;
+    }
+
+    await db.collection("padel_tournaments").doc(tournamentId).update(updateData);
+
+    showToast("Турнир начат!", "success");
+    closeModal(); // close current modal
+    await loadTournaments(); // reload data
+    openTournament(tournamentId); // reopen with schedule view
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
 async function finalizeTournament(tournamentId) {
   if (locks.finalizeTournament) return;
+
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+  if (t.status === 'finished') {
+    showToast("Турнир уже завершён", "error");
+    return;
+  }
+
   if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
   locks.finalizeTournament = true;
 
@@ -4116,9 +4528,13 @@ async function finalizeTournament(tournamentId) {
     const t = tournaments.find(x => x.id === tournamentId);
     if (!t) return;
 
+    // Get playerIds from slots (for backward compat)
+    const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+    const allPlayerIds = t.playerIds && t.playerIds.length > 0 ? t.playerIds : slotPlayerIds;
+
     // Calculate points per player
     const playerPoints = {};
-    t.playerIds.forEach(id => playerPoints[id] = 0);
+    allPlayerIds.forEach(id => playerPoints[id] = 0);
 
     if (t.schedule && t.scores) {
       const isRoundRobin = t.type === 'roundrobin';
@@ -4127,13 +4543,15 @@ async function finalizeTournament(tournamentId) {
           const s0 = t.scores[`${rIdx}_${mIdx}_0`] || 0;
           const s1 = t.scores[`${rIdx}_${mIdx}_1`] || 0;
 
-          match.team1.forEach(idx => {
-            const pid = isRoundRobin ? idx : t.playerIds[idx];
+          // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
+          const team1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => isRoundRobin ? idx : allPlayerIds[idx]) : []);
+          const team2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => isRoundRobin ? idx : allPlayerIds[idx]) : []);
+
+          team1Ids.forEach(pid => {
             playerPoints[pid] = (playerPoints[pid] || 0) + s0;
           });
 
-          match.team2.forEach(idx => {
-            const pid = isRoundRobin ? idx : t.playerIds[idx];
+          team2Ids.forEach(pid => {
             playerPoints[pid] = (playerPoints[pid] || 0) + s1;
           });
         });
@@ -4215,8 +4633,8 @@ async function finalizeTournament(tournamentId) {
       for (let i = 0; i < Math.min(3, pairLeaderboard.length); i++) {
         const pair = pairLeaderboard[i];
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+        winners[i + 1] = pair.playerIds; // Save pair playerIds as array
         for (const pid of pair.playerIds) {
-          winners[i + 1] = pid;
           const pRef = db.collection("padel_players").doc(pid);
           medalUpdates.push(
             pRef.update({
@@ -4230,6 +4648,7 @@ async function finalizeTournament(tournamentId) {
       for (let i = 0; i < Math.min(3, leaderboard.length); i++) {
         const pid = leaderboard[i].playerId;
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+        winners[i + 1] = [pid]; // Save as array for consistency
         winners[i + 1] = pid;
         const pRef = db.collection("padel_players").doc(pid);
         medalUpdates.push(
@@ -4278,6 +4697,10 @@ async function recalculateTournament(tournamentId) {
     const t = tournaments.find(x => x.id === tournamentId);
     if (!t || t.status !== 'finished') return;
 
+    // Get all playerIds from both legacy and slots
+    const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+    const allPlayerIds = [...new Set([...(t.playerIds || []), ...slotPlayerIds])];
+
     // 1. Отнимаем старые медали
     if (t.leaderboard) {
       for (let i = 0; i < Math.min(3, t.leaderboard.length); i++) {
@@ -4299,7 +4722,7 @@ async function recalculateTournament(tournamentId) {
 
     // 1.5. Откатываем старые изменения рейтинга и бонусы
     const rollbackBatch = db.batch();
-    for (const pid of t.playerIds) {
+    for (const pid of allPlayerIds) {
       const p = players.find(pl => pl.id === pid);
       if (!p) continue;
 
@@ -4322,7 +4745,7 @@ async function recalculateTournament(tournamentId) {
     await rollbackBatch.commit();
 
     // Обновляем локальный кэш игроков после отката
-    for (const pid of t.playerIds) {
+    for (const pid of allPlayerIds) {
       const p = players.find(pl => pl.id === pid);
       if (p) {
         let newRating = p.rating || 100;
@@ -4338,22 +4761,23 @@ async function recalculateTournament(tournamentId) {
 
     // 2. Пересчитываем очки
     const playerPoints = {};
-    t.playerIds.forEach(id => playerPoints[id] = 0);
+    allPlayerIds.forEach(id => playerPoints[id] = 0);
 
     if (t.schedule && t.scores) {
-      const isRoundRobin = t.type === 'roundrobin';
       t.schedule.forEach((round, rIdx) => {
         round.forEach((match, mIdx) => {
           const s0 = t.scores[`${rIdx}_${mIdx}_0`] || 0;
           const s1 = t.scores[`${rIdx}_${mIdx}_1`] || 0;
 
-          match.team1.forEach(idx => {
-            const pid = isRoundRobin ? idx : t.playerIds[idx];
+          // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
+          const team1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => allPlayerIds[idx]) : []);
+          const team2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => allPlayerIds[idx]) : []);
+
+          team1Ids.forEach(pid => {
             playerPoints[pid] = (playerPoints[pid] || 0) + s0;
           });
 
-          match.team2.forEach(idx => {
-            const pid = isRoundRobin ? idx : t.playerIds[idx];
+          team2Ids.forEach(pid => {
             playerPoints[pid] = (playerPoints[pid] || 0) + s1;
           });
         });
@@ -4434,8 +4858,8 @@ async function recalculateTournament(tournamentId) {
       for (let i = 0; i < Math.min(3, pairLeaderboard.length); i++) {
         const pair = pairLeaderboard[i];
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+        winners[i + 1] = pair.playerIds; // Save pair playerIds as array
         for (const pid of pair.playerIds) {
-          winners[i + 1] = pid;
           await db.collection("padel_players").doc(pid).update({
             [`medals.${medalType}`]: firebase.firestore.FieldValue.increment(1)
           });
@@ -4446,7 +4870,7 @@ async function recalculateTournament(tournamentId) {
       for (let i = 0; i < Math.min(3, leaderboard.length); i++) {
         const pid = leaderboard[i].playerId;
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-        winners[i + 1] = pid;
+        winners[i + 1] = [pid]; // Save as array for consistency
         await db.collection("padel_players").doc(pid).update({
           [`medals.${medalType}`]: firebase.firestore.FieldValue.increment(1)
         });
@@ -4544,15 +4968,19 @@ async function calculateRTTF(tournament, options = {}) {
       const s1 = tournament.scores[`${rIdx}_${mIdx}_1`] || 0;
       if (s0 === s1) return; // Draw not applicable in padel
 
+      // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
+      const team1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => tournament.playerIds[idx]).filter(Boolean) : []);
+      const team2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => tournament.playerIds[idx]).filter(Boolean) : []);
+
       let winnerIds, loserIds, winnerScore, loserScore;
       if (s0 > s1) {
-        winnerIds = match.team1;
-        loserIds = match.team2;
+        winnerIds = team1Ids;
+        loserIds = team2Ids;
         winnerScore = s0;
         loserScore = s1;
       } else {
-        winnerIds = match.team2;
-        loserIds = match.team1;
+        winnerIds = team2Ids;
+        loserIds = team1Ids;
         winnerScore = s1;
         loserScore = s0;
       }
@@ -4561,9 +4989,8 @@ async function calculateRTTF(tournament, options = {}) {
       const D = getDscore(diff, scoringSystem);
 
       // Each player in team gets/lose individual points
-      winnerIds.forEach(idx => {
-        const pid = isRoundRobin ? idx : tournament.playerIds[idx];
-        const loserRating = loserIds.reduce((sum, li) => sum + (playerRatings[isRoundRobin ? li : tournament.playerIds[li]] || 100), 0) / loserIds.length;
+      winnerIds.forEach(pid => {
+        const loserRating = loserIds.reduce((sum, li) => sum + (playerRatings[li] || 100), 0) / Math.max(1, loserIds.length);
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - loserRating);
 
         // Newbie rules: D=1, k=1 on win, k=0.5 on loss
@@ -4577,9 +5004,8 @@ async function calculateRTTF(tournament, options = {}) {
         ratingChanges[pid] = (ratingChanges[pid] || 0) + delta;
       });
 
-      loserIds.forEach(idx => {
-        const pid = isRoundRobin ? idx : tournament.playerIds[idx];
-        const winnerRating = winnerIds.reduce((sum, wi) => sum + (playerRatings[isRoundRobin ? wi : tournament.playerIds[wi]] || 100), 0) / winnerIds.length;
+      loserIds.forEach(pid => {
+        const winnerRating = winnerIds.reduce((sum, wi) => sum + (playerRatings[wi] || 100), 0) / Math.max(1, winnerIds.length);
         const ratingDiff = Math.abs((playerRatings[pid] || 100) - winnerRating);
 
         const isNewbie = (playerTournaments[pid] || 0) <= 5;
@@ -4661,9 +5087,13 @@ async function deleteTournament(tournamentId) {
     // Find tournament data before deletion
     const t = tournaments.find(x => x.id === tournamentId);
 
+    // Get playerIds from both slots and legacy playerIds field
+    const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+    const allPlayerIds = [...new Set([...(t.playerIds || []), ...slotPlayerIds])];
+
     // First update players (before deleting tournament)
-    if (t && t.playerIds) {
-      for (const pid of t.playerIds) {
+    if (allPlayerIds.length > 0) {
+      for (const pid of allPlayerIds) {
         const pRef = db.collection("padel_players").doc(pid);
         const pDoc = await pRef.get();
         if (pDoc.exists) {
@@ -4674,10 +5104,21 @@ async function deleteTournament(tournamentId) {
 
           // If tournament was finished, remove medals from top 3 and rollback ratings
           if (t.status === 'finished') {
-            if (t.leaderboard) {
+            // Americano: medals from leaderboard
+            if (t.leaderboard && t.leaderboard.length > 0) {
               const top3 = t.leaderboard.slice(0, 3);
               for (let i = 0; i < top3.length; i++) {
                 if (top3[i].playerId === pid) {
+                  const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+                  updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+                }
+              }
+            }
+            // Round Robin: medals from pairLeaderboard
+            if (t.pairLeaderboard && t.pairLeaderboard.length > 0) {
+              const top3Pairs = t.pairLeaderboard.slice(0, 3);
+              for (let i = 0; i < top3Pairs.length; i++) {
+                if (top3Pairs[i].playerIds && top3Pairs[i].playerIds.includes(pid)) {
                   const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
                   updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
                 }
@@ -4823,17 +5264,29 @@ async function recalculateAllResults() {
           }
         } else {
           // Americano: individual points
+          // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
+          const getTeamIds = (match) => {
+            if (match.pair1Players) return match.pair1Players;
+            if (match.team1) return match.team1.map(idx => t.playerIds[idx]).filter(Boolean);
+            return [];
+          };
+          const getTeam2Ids = (match) => {
+            if (match.pair2Players) return match.pair2Players;
+            if (match.team2) return match.team2.map(idx => t.playerIds[idx]).filter(Boolean);
+            return [];
+          };
+
           sched.forEach((round, rIdx) => {
             round.forEach((match, mIdx) => {
               const s0 = scores[`${rIdx}_${mIdx}_0`] || 0;
               const s1 = scores[`${rIdx}_${mIdx}_1`] || 0;
               if (s0 > 0 || s1 > 0) matchesWithScore++;
-              match.team1.forEach(idx => {
-                const pid = t.playerIds[idx];
+              const t1Ids = getTeamIds(match);
+              const t2Ids = getTeam2Ids(match);
+              t1Ids.forEach(pid => {
                 if (pid) playerPoints[pid] = (playerPoints[pid] || 0) + s0;
               });
-              match.team2.forEach(idx => {
-                const pid = t.playerIds[idx];
+              t2Ids.forEach(pid => {
                 if (pid) playerPoints[pid] = (playerPoints[pid] || 0) + s1;
               });
             });
@@ -4886,7 +5339,6 @@ async function recalculateAllResults() {
       for (const pid of (t.playerIds || [])) ratingChanges[pid] = 0;
 
       // Process each match
-      const isRoundRobin = t.type === 'roundrobin';
       if (sched.length > 0) {
         sched.forEach((round, rIdx) => {
           round.forEach((match, mIdx) => {
@@ -4894,15 +5346,19 @@ async function recalculateAllResults() {
             const s1 = scores[`${rIdx}_${mIdx}_1`] || 0;
             if (s0 === s1) return; // Draw not applicable in padel
 
+            // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
+            const team1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => t.playerIds[idx]).filter(Boolean) : []);
+            const team2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => t.playerIds[idx]).filter(Boolean) : []);
+
             let winnerIds, loserIds, winnerScore, loserScore;
             if (s0 > s1) {
-              winnerIds = match.team1;
-              loserIds = match.team2;
+              winnerIds = team1Ids;
+              loserIds = team2Ids;
               winnerScore = s0;
               loserScore = s1;
             } else {
-              winnerIds = match.team2;
-              loserIds = match.team1;
+              winnerIds = team2Ids;
+              loserIds = team1Ids;
               winnerScore = s1;
               loserScore = s0;
             }
@@ -4910,10 +5366,9 @@ async function recalculateAllResults() {
             const diff = Math.abs(winnerScore - loserScore);
             const D = getDscore(diff, scoringSystem);
 
-            winnerIds.forEach(idx => {
-              const pid = isRoundRobin ? idx : t.playerIds[idx];
+            winnerIds.forEach(pid => {
               if (!pid) return;
-              const loserRating = loserIds.reduce((sum, li) => sum + (ratings[isRoundRobin ? li : t.playerIds[li]] || 100), 0) / loserIds.length;
+              const loserRating = loserIds.reduce((sum, li) => sum + (ratings[li] || 100), 0) / Math.max(1, loserIds.length);
               const ratingDiff = Math.abs((ratings[pid] || 100) - loserRating);
               const isNewbie = (tp[pid] || 0) <= 5;
               const actualK = isNewbie ? 1 : k;
@@ -4923,10 +5378,9 @@ async function recalculateAllResults() {
               ratingChanges[pid] = (ratingChanges[pid] || 0) + delta;
             });
 
-            loserIds.forEach(idx => {
-              const pid = isRoundRobin ? idx : t.playerIds[idx];
+            loserIds.forEach(pid => {
               if (!pid) return;
-              const winnerRating = winnerIds.reduce((sum, wi) => sum + (ratings[isRoundRobin ? wi : t.playerIds[wi]] || 100), 0) / winnerIds.length;
+              const winnerRating = winnerIds.reduce((sum, wi) => sum + (ratings[wi] || 100), 0) / Math.max(1, winnerIds.length);
               const ratingDiff = Math.abs((ratings[pid] || 100) - winnerRating);
               const isNewbie = (tp[pid] || 0) <= 5;
               const actualK = isNewbie ? 0.5 : k;
@@ -5328,6 +5782,10 @@ function subscribeToTrainingMeta() {
     populateTrainingSelects();
   }, err => {
     console.error("Training meta subscription error:", err);
+    // Log to help diagnose permission issues
+    if (err.code === 'permission-denied') {
+      console.warn('Firestore permission denied for settings/training_meta. Check Firestore rules.');
+    }
   });
 }
 
@@ -6146,6 +6604,213 @@ async function savePairs(plannedGameId, pairs) {
   }
 }
 
+// ===== Tournament Applications & Slots (mirrors planned games) =====
+
+async function applyForTournament(tournamentId) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы подать заявку", "error");
+    return;
+  }
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const slots = t.slots || [];
+  const applications = t.applications || [];
+
+  if (slots.some(s => s.playerId === userEmail || s.playerId === currentUserData?.playerId)) {
+    showToast("Вы уже записаны", "error");
+    return;
+  }
+  if (applications.some(a => a.playerId === userEmail || a.playerId === currentUserData?.playerId)) {
+    showToast("Вы уже подали заявку", "error");
+    return;
+  }
+
+  try {
+    const newApp = {
+      playerId: currentUserData?.playerId || userEmail,
+      playerName: getCurrentUserFullName() || userEmail,
+      appliedAt: new Date().toISOString()
+    };
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      applications: firebase.firestore.FieldValue.arrayUnion(newApp)
+    });
+    showToast("Заявка подана", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function confirmTournamentApplication(tournamentId, playerId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  if (!isAdmin && !isOrganizer) {
+    showToast("Только организатор или администратор может подтверждать заявки", "error");
+    return;
+  }
+
+  const applications = t.applications || [];
+  const app = applications.find(a => a.playerId === playerId);
+  if (!app) {
+    showToast("Заявка не найдена", "error");
+    return;
+  }
+
+  const freeSlotIndex = t.slots.findIndex(s => !s.playerId);
+  if (freeSlotIndex === -1) {
+    showToast("Нет свободных мест", "error");
+    return;
+  }
+
+  const updatedSlots = [...t.slots];
+  updatedSlots[freeSlotIndex] = {
+    playerId: app.playerId,
+    playerName: app.playerName,
+    bookedAt: new Date().toISOString()
+  };
+
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      slots: updatedSlots,
+      applications: updatedApps
+    });
+    showToast("Заявка подтверждена", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function cancelTournamentApplication(tournamentId) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы отменить заявку", "error");
+    return;
+  }
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const applications = t.applications || [];
+  const updatedApps = applications.filter(a => a.playerId !== userEmail && a.playerId !== currentUserData?.playerId);
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      applications: updatedApps
+    });
+    showToast("Заявка отменена", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function cancelTournamentBooking(tournamentId) {
+  if (!currentUser) {
+    showToast("Войдите, чтобы отменить участие", "error");
+    return;
+  }
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || !t.slots) return;
+
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const slotIndex = t.slots.findIndex(s => s.playerId === userEmail || s.playerId === currentUserData?.playerId);
+  if (slotIndex === -1) {
+    showToast("Вы не записаны", "error");
+    return;
+  }
+
+  if (!confirm("Отменить участие в турнире?")) return;
+
+  const updatedSlots = [...t.slots];
+  updatedSlots[slotIndex] = { playerId: null, playerName: null, bookedAt: null };
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({ slots: updatedSlots });
+    showToast("Участие отменено", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function changeTournamentPlayer(tournamentId, slotIndex, newPlayerId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || !t.slots || slotIndex < 0 || slotIndex >= t.slots.length) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  if (!isSuperAdmin && !isOrganizer) {
+    showToast("Только организатор или супер-админ может редактировать записи", "error");
+    return;
+  }
+
+  try {
+    const updatedSlots = [...t.slots];
+    if (!newPlayerId) {
+      updatedSlots[slotIndex] = { playerId: null, playerName: null, bookedAt: null };
+    } else {
+      const player = players.find(p => p.id === newPlayerId);
+      updatedSlots[slotIndex] = {
+        playerId: newPlayerId,
+        playerName: player ? player.name : '',
+        bookedAt: new Date().toISOString()
+      };
+    }
+
+    await db.collection("padel_tournaments").doc(tournamentId).update({ slots: updatedSlots });
+    showToast("Запись обновлена", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+function onTournamentSlotSearch(tournamentId, slotIndex) {
+  const nameInput = document.getElementById(`tournamentSlot_${slotIndex}_name`);
+  const hiddenInput = document.getElementById(`tournamentSlot_${slotIndex}_id`);
+  const dropdown = document.getElementById(`tournamentSlot_${slotIndex}_dropdown`);
+  if (!nameInput || !dropdown) return;
+
+  const query = nameInput.value.trim().toLowerCase();
+
+  if (!query) {
+    dropdown.style.display = 'none';
+    return;
+  }
+
+  const t = tournaments.find(x => x.id === tournamentId);
+  const usedIds = t ? t.slots.map(s => s.playerId).filter(Boolean) : [];
+
+  const matches = players.filter(p => {
+    const name = (p.name || '').toLowerCase();
+    return name.includes(query) && !usedIds.includes(p.id);
+  }).slice(0, 8);
+
+  if (matches.length === 0) {
+    dropdown.innerHTML = '<div style="padding:8px 12px; color:var(--text-muted); font-size:13px;">Нет совпадений</div>';
+  } else {
+    dropdown.innerHTML = matches.map(p => `<div style="padding:8px 12px; cursor:pointer; font-size:14px;" onclick="selectTournamentSlotPlayer('${tournamentId}', ${slotIndex}, '${p.id}', '${escapeHtml(p.name)}')">${escapeHtml(p.name)}</div>`).join('');
+  }
+  dropdown.style.display = 'block';
+}
+
+function selectTournamentSlotPlayer(tournamentId, slotIndex, playerId, playerName) {
+  const nameInput = document.getElementById(`tournamentSlot_${slotIndex}_name`);
+  const hiddenInput = document.getElementById(`tournamentSlot_${slotIndex}_id`);
+  const dropdown = document.getElementById(`tournamentSlot_${slotIndex}_dropdown`);
+  if (nameInput) nameInput.value = playerName;
+  if (hiddenInput) hiddenInput.value = playerId;
+  if (dropdown) dropdown.style.display = 'none';
+  changeTournamentPlayer(tournamentId, slotIndex, playerId);
+}
+
 async function createGamesFromPlan(plannedGameId) {
   const pg = plannedGames.find(x => x.id === plannedGameId);
   if (!pg || !pg.pairs || pg.status !== 'ready') {
@@ -6323,11 +6988,68 @@ function openCreateTournamentModal() {
   document.getElementById('createTournamentModal').classList.add('show');
   // Set default date
   document.getElementById('tournamentDate').valueAsDate = new Date();
-  // Reset search
-  const searchInput = document.getElementById('playerSearchInput');
-  if (searchInput) searchInput.value = '';
-  // Render player list
-  renderPlayerSelect();
+  document.getElementById('tournamentTimeStart').value = '';
+  document.getElementById('tournamentTimeEnd').value = '';
+  document.getElementById('tournamentComment').value = '';
+  document.getElementById('addTournamentLocationWrap').style.display = 'none';
+  populateTournamentSelects();
+  renderTournamentSlotInputs();
+  // Reset RR pairs
+  rrPairs = [];
+  document.getElementById('rrPairFormation').style.display = 'none';
+}
+
+function populateTournamentSelects() {
+  const locSelect = document.getElementById('tournamentLocation');
+  if (!locSelect) return;
+  const currentLoc = locSelect.value;
+  locSelect.innerHTML = '<option value="">Выберите локацию...</option>' +
+    trainingLocations.map(l => `<option value="${escapeHtml(l)}" ${l === currentLoc ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('');
+}
+
+function showAddTournamentLocationInput() {
+  const wrap = document.getElementById('addTournamentLocationWrap');
+  wrap.style.display = wrap.style.display === 'flex' ? 'none' : 'flex';
+}
+
+async function addTournamentLocation() {
+  const name = document.getElementById('newTournamentLocationName').value.trim();
+  if (!name) return;
+  try {
+    const docRef = db.collection("settings").doc("training_meta");
+    const doc = await docRef.get();
+    const locations = doc.exists ? (doc.data().locations || []) : [];
+    if (!locations.includes(name)) {
+      locations.push(name);
+      await docRef.set({ locations }, { merge: true });
+    }
+    document.getElementById('newTournamentLocationName').value = '';
+    document.getElementById('addTournamentLocationWrap').style.display = 'none';
+    populateTournamentSelects();
+    showToast("Локация добавлена", "success");
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+function renderTournamentSlotInputs() {
+  const container = document.getElementById('tournamentSlotInputs');
+  const type = document.getElementById('tournamentType').value;
+  let count = 8;
+  if (type === 'americano') {
+    count = parseInt(document.getElementById('tournamentSize').value) || 8;
+  } else {
+    count = (parseInt(document.getElementById('rrPairCount').value) || 4) * 2;
+  }
+  if (!container) return;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += `<select class="form-select" id="tournamentSlot_${i}">
+      <option value="">Слот ${i + 1} — свободен</option>
+      ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+    </select>`;
+  }
+  container.innerHTML = html;
 }
 
 function openCreateGameModal() {
@@ -6862,7 +7584,7 @@ async function deleteGame(gameId) {
 // ============================================
 // TRAININGS
 // ============================================
-function openCreateTrainingModal() {
+async function openCreateTrainingModal() {
   if (!isAdmin) {
     showToast("Только администратор может создавать тренировки", "error");
     return;
@@ -6879,11 +7601,12 @@ function openCreateTrainingModal() {
   document.getElementById('addCoachWrap').style.display = 'none';
   document.getElementById('addGroupWrap').style.display = 'none';
   renderTrainingSlotInputs();
+  await ensureTrainingMetaLoaded();
   populateTrainingSelects();
   document.getElementById('createTrainingModal').classList.add('show');
 }
 
-function copyTraining(trainingId) {
+async function copyTraining(trainingId) {
   if (!isAdmin) {
     showToast("Только администратор может копировать тренировки", "error");
     return;
@@ -6900,6 +7623,7 @@ function copyTraining(trainingId) {
   document.getElementById('addCoachWrap').style.display = 'none';
   document.getElementById('addGroupWrap').style.display = 'none';
 
+  await ensureTrainingMetaLoaded();
   populateTrainingSelects();
   renderTrainingSlotInputs();
 
@@ -7012,6 +7736,22 @@ function populateTrainingSelects() {
   if (groupSelect) {
     groupSelect.innerHTML = '<option value="">Выберите группу...</option>' +
       trainingGroups.map(g => `<option value="${escapeHtml(g)}" ${g === currentGroup ? 'selected' : ''}>${escapeHtml(g)}</option>`).join('');
+  }
+}
+
+async function ensureTrainingMetaLoaded() {
+  if (trainingLocations.length > 0 && trainingCoaches.length > 0) return;
+  if (!currentUser) return;
+  try {
+    const doc = await db.collection("settings").doc("training_meta").get();
+    if (doc.exists) {
+      const data = doc.data();
+      trainingLocations = data.locations || [];
+      trainingCoaches = data.coaches || [];
+      trainingGroups = data.groups || [];
+    }
+  } catch (e) {
+    console.error("ensureTrainingMetaLoaded error:", e);
   }
 }
 
@@ -7708,6 +8448,172 @@ init();
         <input type="date" class="form-input" id="tournamentDate">
       </div>
       <div class="form-group">
+        <label class="form-label">Время</label>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <select class="form-select" id="tournamentTimeStart" style="flex: 1;">
+            <option value="">Начало...</option>
+            <option value="06:00">06:00</option>
+            <option value="06:15">06:15</option>
+            <option value="06:30">06:30</option>
+            <option value="06:45">06:45</option>
+            <option value="07:00">07:00</option>
+            <option value="07:15">07:15</option>
+            <option value="07:30">07:30</option>
+            <option value="07:45">07:45</option>
+            <option value="08:00">08:00</option>
+            <option value="08:15">08:15</option>
+            <option value="08:30">08:30</option>
+            <option value="08:45">08:45</option>
+            <option value="09:00">09:00</option>
+            <option value="09:15">09:15</option>
+            <option value="09:30">09:30</option>
+            <option value="09:45">09:45</option>
+            <option value="10:00">10:00</option>
+            <option value="10:15">10:15</option>
+            <option value="10:30">10:30</option>
+            <option value="10:45">10:45</option>
+            <option value="11:00">11:00</option>
+            <option value="11:15">11:15</option>
+            <option value="11:30">11:30</option>
+            <option value="11:45">11:45</option>
+            <option value="12:00">12:00</option>
+            <option value="12:15">12:15</option>
+            <option value="12:30">12:30</option>
+            <option value="12:45">12:45</option>
+            <option value="13:00">13:00</option>
+            <option value="13:15">13:15</option>
+            <option value="13:30">13:30</option>
+            <option value="13:45">13:45</option>
+            <option value="14:00">14:00</option>
+            <option value="14:15">14:15</option>
+            <option value="14:30">14:30</option>
+            <option value="14:45">14:45</option>
+            <option value="15:00">15:00</option>
+            <option value="15:15">15:15</option>
+            <option value="15:30">15:30</option>
+            <option value="15:45">15:45</option>
+            <option value="16:00">16:00</option>
+            <option value="16:15">16:15</option>
+            <option value="16:30">16:30</option>
+            <option value="16:45">16:45</option>
+            <option value="17:00">17:00</option>
+            <option value="17:15">17:15</option>
+            <option value="17:30">17:30</option>
+            <option value="17:45">17:45</option>
+            <option value="18:00">18:00</option>
+            <option value="18:15">18:15</option>
+            <option value="18:30">18:30</option>
+            <option value="18:45">18:45</option>
+            <option value="19:00">19:00</option>
+            <option value="19:15">19:15</option>
+            <option value="19:30">19:30</option>
+            <option value="19:45">19:45</option>
+            <option value="20:00">20:00</option>
+            <option value="20:15">20:15</option>
+            <option value="20:30">20:30</option>
+            <option value="20:45">20:45</option>
+            <option value="21:00">21:00</option>
+            <option value="21:15">21:15</option>
+            <option value="21:30">21:30</option>
+            <option value="21:45">21:45</option>
+            <option value="22:00">22:00</option>
+            <option value="22:15">22:15</option>
+            <option value="22:30">22:30</option>
+            <option value="22:45">22:45</option>
+            <option value="23:00">23:00</option>
+          </select>
+          <span style="color: var(--text-muted);">—</span>
+          <select class="form-select" id="tournamentTimeEnd" style="flex: 1;">
+            <option value="">Конец...</option>
+            <option value="07:00">07:00</option>
+            <option value="07:15">07:15</option>
+            <option value="07:30">07:30</option>
+            <option value="07:45">07:45</option>
+            <option value="08:00">08:00</option>
+            <option value="08:15">08:15</option>
+            <option value="08:30">08:30</option>
+            <option value="08:45">08:45</option>
+            <option value="09:00">09:00</option>
+            <option value="09:15">09:15</option>
+            <option value="09:30">09:30</option>
+            <option value="09:45">09:45</option>
+            <option value="10:00">10:00</option>
+            <option value="10:15">10:15</option>
+            <option value="10:30">10:30</option>
+            <option value="10:45">10:45</option>
+            <option value="11:00">11:00</option>
+            <option value="11:15">11:15</option>
+            <option value="11:30">11:30</option>
+            <option value="11:45">11:45</option>
+            <option value="12:00">12:00</option>
+            <option value="12:15">12:15</option>
+            <option value="12:30">12:30</option>
+            <option value="12:45">12:45</option>
+            <option value="13:00">13:00</option>
+            <option value="13:15">13:15</option>
+            <option value="13:30">13:30</option>
+            <option value="13:45">13:45</option>
+            <option value="14:00">14:00</option>
+            <option value="14:15">14:15</option>
+            <option value="14:30">14:30</option>
+            <option value="14:45">14:45</option>
+            <option value="15:00">15:00</option>
+            <option value="15:15">15:15</option>
+            <option value="15:30">15:30</option>
+            <option value="15:45">15:45</option>
+            <option value="16:00">16:00</option>
+            <option value="16:15">16:15</option>
+            <option value="16:30">16:30</option>
+            <option value="16:45">16:45</option>
+            <option value="17:00">17:00</option>
+            <option value="17:15">17:15</option>
+            <option value="17:30">17:30</option>
+            <option value="17:45">17:45</option>
+            <option value="18:00">18:00</option>
+            <option value="18:15">18:15</option>
+            <option value="18:30">18:30</option>
+            <option value="18:45">18:45</option>
+            <option value="19:00">19:00</option>
+            <option value="19:15">19:15</option>
+            <option value="19:30">19:30</option>
+            <option value="19:45">19:45</option>
+            <option value="20:00">20:00</option>
+            <option value="20:15">20:15</option>
+            <option value="20:30">20:30</option>
+            <option value="20:45">20:45</option>
+            <option value="21:00">21:00</option>
+            <option value="21:15">21:15</option>
+            <option value="21:30">21:30</option>
+            <option value="21:45">21:45</option>
+            <option value="22:00">22:00</option>
+            <option value="22:15">22:15</option>
+            <option value="22:30">22:30</option>
+            <option value="22:45">22:45</option>
+            <option value="23:00">23:00</option>
+            <option value="23:15">23:15</option>
+            <option value="23:30">23:30</option>
+            <option value="23:45">23:45</option>
+            <option value="00:00">00:00</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Локация</label>
+        <select class="form-select" id="tournamentLocation">
+          <option value="">Выберите локацию...</option>
+        </select>
+        <div id="addTournamentLocationWrap" style="display: none; margin-top: 8px; gap: 8px; align-items: center;">
+          <input type="text" class="form-input" id="newTournamentLocationName" placeholder="Название локации" style="flex: 1;">
+          <button class="btn btn-primary btn-sm" onclick="addTournamentLocation()">Добавить</button>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 8px; width: auto;" onclick="showAddTournamentLocationInput()">+ Добавить локацию</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Комментарий (опционально)</label>
+        <input type="text" class="form-input" id="tournamentComment" placeholder="Например: уровень 500+" maxlength="50">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Макс. 50 символов</div>
+      </div>
+      <div class="form-group">
         <label class="form-label">Тип турнира</label>
         <select class="form-select" id="tournamentType" onchange="onTournamentTypeChange()">
           <option value="americano" selected>🇺🇸 Americano (вращающиеся пары)</option>
@@ -7722,8 +8628,8 @@ init();
         </select>
       </div>
       <div class="form-group">
-        <label class="form-label">Количество игроков</label>
-        <select class="form-select" id="tournamentSize">
+        <label class="form-label">Количество участников</label>
+        <select class="form-select" id="tournamentSize" onchange="renderTournamentSlotInputs()">
           <option value="4">4 игрока (1 корт, 3 раунда)</option>
           <option value="8" selected>8 игроков (2 корта, 7 раундов)</option>
           <option value="12">12 игроков (3 корта, 11 раундов)</option>
@@ -7732,7 +8638,7 @@ init();
       </div>
       <div class="form-group" id="rrSizeGroup" style="display:none;">
         <label class="form-label">Количество пар (Round Robin)</label>
-        <select class="form-select" id="rrPairCount">
+        <select class="form-select" id="rrPairCount" onchange="renderTournamentSlotInputs()">
           <option value="4" selected>4 пары (8 игроков, 1 корт)</option>
           <option value="8">8 пар (16 игроков, 2 корта)</option>
         </select>
@@ -7748,21 +8654,10 @@ init();
           <option value="40">40 очков</option>
         </select>
       </div>
+
       <div class="form-group">
-        <label class="form-label">Выберите игроков (<span id="selectedCount">0</span> выбрано)</label>
-        <input type="text" class="player-search-input" id="playerSearchInput" placeholder="🔍 Поиск по имени или фамилии..." oninput="onPlayerSearchInput()">
-
-        <!-- Selected players -->
-        <div class="selected-players-section" id="selectedPlayersSection" style="display: none;">
-          <div class="selected-players-label">✅ Выбранные</div>
-          <div class="selected-players-list" id="selectedPlayersList"></div>
-        </div>
-
-        <!-- All players list -->
-        <div class="player-list-label" id="allPlayersLabel">Все игроки</div>
-        <div class="player-select-list" id="playerSelectList">
-          <div style="padding: 20px; text-align: center; color: var(--text-muted);">Загрузка игроков...</div>
-        </div>
+        <label class="form-label">Участники (опционально)</label>
+        <div id="tournamentSlotInputs"></div>
       </div>
 
       <!-- Round Robin: Pair Formation -->
