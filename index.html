@@ -1873,7 +1873,7 @@ const FIREBASE_CONFIG = {
 const SUPER_ADMIN_LOGIN = "6585875box";
 const SUPER_ADMIN_PASS = "Kluha082";
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "29.08.2026/7";
+const SITE_VERSION = "29.08.2026/8";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -3224,8 +3224,8 @@ function openTournament(id) {
         const currentValue = slot.playerId || '';
         const currentName = slot.playerName || '';
         slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-          <span>Слот ${idx + 1}${infoBtn}</span>
-          <div style="display: flex; align-items: center; gap: 8px; position: relative;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
+          <div style="display: flex; align-items: center; gap: 8px; position: relative; min-width: 0;">
             <div style="position: relative; width: 200px;">
               <input type="text" class="form-input game-player-search" id="tournamentSlot_${idx}_name" value="${escapeHtml(currentName)}" placeholder="🔍 Поиск игрока..." oninput="onTournamentSlotSearch('${id}', ${idx})" onfocus="onTournamentSlotSearch('${id}', ${idx})" style="width: 100%;">
               <input type="hidden" id="tournamentSlot_${idx}_id" value="${escapeHtml(currentValue)}">
@@ -3235,13 +3235,13 @@ function openTournament(id) {
           </div>
         </div>`;
       } else if (slot.playerId) {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}${infoBtn}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
           <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
         </div>`;
       } else {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}</span>
           <span style="color: var(--accent);">✓ Свободно</span>
         </div>`;
       }
@@ -6165,8 +6165,8 @@ function openPlannedGame(plannedGameId) {
         const currentValue = slot.playerId || '';
         const currentName = slot.playerName || '';
         slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-          <span>Слот ${idx + 1}${infoBtn}</span>
-          <div style="display: flex; align-items: center; gap: 8px; position: relative;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
+          <div style="display: flex; align-items: center; gap: 8px; position: relative; min-width: 0;">
             <div style="position: relative; width: 200px;">
               <input type="text" class="form-input game-player-search" id="planGameSlot_${idx}_name" value="${escapeHtml(currentName)}" placeholder="🔍 Поиск игрока..." oninput="onPlanGameSlotSearch('${plannedGameId}', ${idx})" onfocus="onPlanGameSlotSearch('${plannedGameId}', ${idx})" style="width: 100%;">
               <input type="hidden" id="planGameSlot_${idx}_id" value="${escapeHtml(currentValue)}">
@@ -6176,13 +6176,13 @@ function openPlannedGame(plannedGameId) {
           </div>
         </div>`;
       } else if (slot.playerId) {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}${infoBtn}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
           <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
         </div>`;
       } else {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}</span>
           <span style="color: var(--accent);">✓ Свободно</span>
         </div>`;
       }
@@ -7938,8 +7938,8 @@ function openTraining(trainingId) {
         const currentPlayer = players.find(p => p.id === slot.playerId);
         const currentValue = slot.playerId || '';
         slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
-          <span>Слот ${idx + 1}${infoBtn}</span>
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
             <select class="form-select" style="max-width: 200px;" onchange="changeTrainingPlayer('${trainingId}', ${idx}, this.value)">
               <option value="">Свободно</option>
               ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}" ${p.id === currentValue ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
@@ -7949,13 +7949,13 @@ function openTraining(trainingId) {
           </div>
         </div>`;
       } else if (slot.playerId) {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}${infoBtn}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}${infoBtn}</span>
           <span style="color: var(--text-muted);">👤 ${escapeHtml(slot.playerName)}</span>
         </div>`;
       } else {
-        slotsHtml += `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <span>Слот ${idx + 1}</span>
+        slotsHtml += `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
+          <span style="white-space: nowrap; flex-shrink: 0;">Слот ${idx + 1}</span>
           <span style="color: var(--accent);">✓ Свободно</span>
         </div>`;
       }
