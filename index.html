@@ -2688,7 +2688,7 @@ async function renderProfile() {
     }
 
     const playerName = playerData ? playerData.name : '-';
-    const rating = playerData ? (playerData.rating || 100) : '-';
+    const rating = playerData ? (typeof playerData.rating === 'number' ? playerData.rating : 100) : '-';
     const medals = playerData ? playerData.medals : { gold: 0, silver: 0, bronze: 0 };
     const medalStr = medals ?
       (medals.gold ? '🥇'.repeat(medals.gold) : '') +
@@ -3015,7 +3015,7 @@ function renderPlayers() {
     if (aHasGames && !bHasGames) return -1;
     if (!aHasGames && bHasGames) return 1;
     // Both have games or both don't — sort by rating desc, then medals
-    const ratingDiff = (b.rating || 100) - (a.rating || 100);
+    const ratingDiff = ((typeof b.rating === 'number' ? b.rating : 100) - (typeof a.rating === 'number' ? a.rating : 100));
     if (ratingDiff !== 0) return ratingDiff;
     const medalA = (a.medals?.gold || 0) * 3 + (a.medals?.silver || 0) * 2 + (a.medals?.bronze || 0);
     const medalB = (b.medals?.gold || 0) * 3 + (b.medals?.silver || 0) * 2 + (b.medals?.bronze || 0);
@@ -3039,13 +3039,13 @@ function renderPlayers() {
     const finishedTournaments = tournamentCountFinished[p.id] || 0;
     const hasGames = ((p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0)) > 0 || finishedTournaments > 0;
     const totalGames = (p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0);
-    const ratingVal = hasGames ? (p.rating || 100) : '-';
+    const ratingVal = hasGames ? formatRating(p.rating) : '—';
     const isNewbie = totalGames <= 5 && hasGames;
 
     html += `<tr>
       <td><span class="player-rank ${rankClass}">${idx + 1}</span></td>
       <td><span class="player-name">${escapeHtml(p.name)}</span>${isNewbie ? ' <span style="font-size:11px;color:var(--success);">[новичок]</span>' : ''}</td>
-      <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${p.rating || 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
+      <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${typeof p.rating === 'number' ? p.rating : 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
       <td><div class="medals">${medalStr || '<span style="color:var(--text-muted)">-</span>'}</div></td>
       <td>${p.tournamentCount || 0}</td>
       <td>${gamesCount[p.id] || 0}</td>
@@ -4748,7 +4748,7 @@ async function recalculateTournament(tournamentId) {
       const p = players.find(pl => pl.id === pid);
       if (!p) continue;
 
-      const currentRating = p.rating || 100;
+      const currentRating = typeof p.rating === 'number' ? p.rating : 100;
       let newRating = currentRating;
 
       // Откат базовых изменений рейтинга
@@ -4770,7 +4770,7 @@ async function recalculateTournament(tournamentId) {
     for (const pid of allPlayerIds) {
       const p = players.find(pl => pl.id === pid);
       if (p) {
-        let newRating = p.rating || 100;
+        let newRating = typeof p.rating === 'number' ? p.rating : 100;
         if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
           newRating -= t.ratingChanges[pid];
         }
@@ -5232,11 +5232,11 @@ async function recalculateAllResults() {
       if (data.scheduleData && !data.schedule) {
         try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
       }
-      return { type: 'tournament', data: { id: d.id, ...data }, time: data.finishedAt ? new Date(data.finishedAt).getTime() : 0 };
+      return { type: 'tournament', data: { id: d.id, ...data }, time: data.finishedAt ? (data.finishedAt.toMillis ? data.finishedAt.toMillis() : new Date(data.finishedAt).getTime()) : 0 };
     });
     const finishedGames = gSnap.docs.map(d => {
       const data = d.data();
-      return { type: 'game', data: { id: d.id, ...data }, time: data.finishedAt ? new Date(data.finishedAt).getTime() : 0 };
+      return { type: 'game', data: { id: d.id, ...data }, time: data.finishedAt ? (data.finishedAt.toMillis ? data.finishedAt.toMillis() : new Date(data.finishedAt).getTime()) : 0 };
     });
 
     const allEvents = [...finishedTournaments, ...finishedGames].sort((a, b) => a.time - b.time);
@@ -5551,14 +5551,14 @@ async function deleteTournament(tournamentId) {
               updates.rating = computeRating(updates.mu, updates.sigma);
             } else if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
               // Legacy fallback
-              const currentRating = pData.rating || 100;
+              const currentRating = typeof pData.rating === 'number' ? pData.rating : 100;
               const change = t.ratingChanges[pid];
               updates.rating = Math.max(1, Math.round(currentRating - change));
             }
 
             // Rollback rating bonuses (legacy)
             if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
-              const currentRating = updates.rating || pData.rating || 100;
+              const currentRating = typeof updates.rating === 'number' ? updates.rating : (typeof pData.rating === 'number' ? pData.rating : 100);
               const bonus = t.ratingBonuses[pid];
               updates.rating = Math.max(1, currentRating - bonus);
             }
@@ -7560,7 +7560,7 @@ async function deleteGame(gameId) {
           updates.rating = computeRating(updates.mu, updates.sigma);
         } else if (g.ratingChanges && typeof g.ratingChanges[pid] === 'number') {
           // Legacy fallback
-          const currR = pData.rating || 100;
+          const currR = typeof pData.rating === 'number' ? pData.rating : 100;
           updates.rating = Math.max(1, Math.round(currR - g.ratingChanges[pid]));
         }
 
@@ -8084,7 +8084,7 @@ function showSlotPlayerInfo(playerId, playerName) {
   if (oldOverlay) oldOverlay.remove();
 
   const p = players.find(x => x.id === playerId);
-  const rating = p && p.rating ? p.rating : '—';
+  const rating = p && typeof p.rating === 'number' ? formatRating(p.rating) : '—';
   const lundaRating = p && p.lundaRating ? p.lundaRating : null;
   let telegram = p && p.telegram ? p.telegram : '';
   if (telegram && !telegram.startsWith('@')) telegram = '@' + telegram;
@@ -8417,6 +8417,11 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function formatRating(rating) {
+  if (typeof rating !== 'number') return '—';
+  return rating === 0 ? '—' : String(rating);
 }
 
 // ============================================
