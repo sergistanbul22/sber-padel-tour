@@ -1760,6 +1760,23 @@
   </div>
 </div>
 
+<!-- Score Edit Modal (bulk edit all tournament scores) -->
+<div class="modal-overlay" id="scoreEditModal" onclick="if(event.target===this)closeScoreEditModal()">
+  <div class="modal" style="max-width: 600px; max-height: 90vh; display: flex; flex-direction: column;">
+    <div class="modal-header">
+      <span class="modal-title">✏️ Редактирование счёта</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeScoreEditModal()">✕</button>
+    </div>
+    <div id="scoreEditContent" style="padding: 20px; overflow-y: auto; flex: 1;">
+      <!-- Content rendered by JS -->
+    </div>
+    <div style="padding: 16px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px;">
+      <button class="btn btn-primary" style="flex: 1;" onclick="saveScoreEditModal()">💾 Сохранить счёт</button>
+      <button class="btn btn-secondary" onclick="closeScoreEditModal()">Отмена</button>
+    </div>
+  </div>
+</div>
+
 <!-- Create Game Modal -->
 <div class="modal-overlay" id="createGameModal" onclick="if(event.target===this)closeCreateGameModal()">
   <div class="modal" style="max-width: 500px;">
@@ -1878,6 +1895,15 @@ const SITE_VERSION = "29.08.2026/9-fixed";
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
   return SUPER_ADMIN_EMAILS.includes(e);
+}
+
+// Parse Round Robin config from select value (format: "pairs_courts", e.g. "4_1", "8_4")
+function parseRrConfig(value) {
+  if (!value) return { pairs: 4, courts: 1 };
+  const parts = String(value).split('_');
+  const pairs = parseInt(parts[0]) || 4;
+  const courts = parseInt(parts[1]) || (pairs <= 4 ? 1 : 2);
+  return { pairs, courts };
 }
 
 // ============================================
@@ -3306,17 +3332,25 @@ function openTournament(id) {
       bookingButtonsHtml = `<div style="margin-bottom: 16px;">
         <button class="btn btn-secondary" style="width: 100%;" onclick="cancelTournamentApplication('${id}')">❌ Отменить заявку</button>
       </div>`;
-    } else if (!isFull) {
+    } else {
+      // Show apply button for all (including admin) if not booked/applied
       bookingButtonsHtml = `<div style="margin-bottom: 16px;">
         <button class="btn btn-primary" style="width: 100%;" onclick="applyForTournament('${id}')">✋ Подать заявку</button>
       </div>`;
     }
   }
 
+  // Admin always sees apply button if not booked/applied (in case regular logic fails)
+  if (isAdmin && !alreadyBooked && !alreadyApplied && t.status !== 'finished' && !isPast) {
+    bookingButtonsHtml = `<div style="margin-bottom: 16px;">
+      <button class="btn btn-primary" style="width: 100%;" onclick="applyForTournament('${id}')">✋ Подать заявку</button>
+    </div>`;
+  }
+
   const hasSchedule = t.schedule && t.schedule.length > 0;
 
   // Show slots/applications/booking only when tournament hasn't started
-  if (!hasSchedule) {
+  if (t.status === 'upcoming') {
     html += bookingButtonsHtml;
     html += applicationsHtml;
 
@@ -3324,59 +3358,59 @@ function openTournament(id) {
       <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">👥 Участники (${bookedCount}/${t.totalSlots || t.playerIds?.length || 0})</div>
       ${slotsHtml}
     </div>`;
+  }
 
-    // Round Robin pairs display/edit
-    if (t.type === 'roundrobin') {
-      const pairCount = t.pairs?.length || (t.totalSlots / 2) || 0;
-      if (pairCount > 0) {
-        let pairsDisplayHtml = '';
-        const slotPlayerIds = slots.filter(s => s.playerId).map(s => s.playerId);
-        
-        if (editingPairs && editingPairsTournamentId === t.id && isOrganizerOrAdmin) {
-          // Edit mode
-          for (let i = 0; i < pairCount; i++) {
-            const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
-            pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
-              <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
-              <select class="form-input" id="pair_edit_${t.id}_${i}_0" style="flex: 1;">
-                <option value="">Выберите игрока...</option>
-                ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[0] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
-              </select>
-              <span style="color: var(--text-muted)">+</span>
-              <select class="form-input" id="pair_edit_${t.id}_${i}_1" style="flex: 1;">
-                <option value="">Выберите игрока...</option>
-                ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[1] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
-              </select>
-            </div>`;
-          }
-          html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
-            <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">🔗 Редактирование пар</div>
-            ${pairsDisplayHtml}
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-              <button class="btn btn-primary" style="flex: 1;" onclick="savePairsChanges('${t.id}')">💾 Сохранить пары</button>
-              <button class="btn btn-secondary" style="flex: 1;" onclick="toggleEditPairs('${t.id}')">❌ Отменить</button>
-            </div>
-          </div>`;
-        } else {
-          // View mode
-          for (let i = 0; i < pairCount; i++) {
-            const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
-            const p1Name = pair.playerIds[0] ? getPlayerNameById(pair.playerIds[0]) : '—';
-            const p2Name = pair.playerIds[1] ? getPlayerNameById(pair.playerIds[1]) : '—';
-            pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
-              <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
-              <span style="flex: 1; text-align: center;">${escapeHtml(p1Name)} + ${escapeHtml(p2Name)}</span>
-            </div>`;
-          }
-          html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <div style="font-size: 14px; font-weight: 600;">🔗 Пары</div>
-              ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary btn-sm" onclick="toggleEditPairs('${t.id}')">✏️ Редактировать</button>` : ''}
-            </div>
-            ${pairsDisplayHtml}
-            ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="autoAssignPairs('${t.id}')">🎲 Авто-распределение</button>` : ''}
+  // Round Robin pairs display/edit (show for all statuses)
+  if (t.type === 'roundrobin') {
+    const pairCount = t.pairs?.length || (t.totalSlots / 2) || 0;
+    if (pairCount > 0) {
+      let pairsDisplayHtml = '';
+      const slotPlayerIds = slots.filter(s => s.playerId).map(s => s.playerId);
+      
+      if (editingPairs && editingPairsTournamentId === t.id && isOrganizerOrAdmin) {
+        // Edit mode
+        for (let i = 0; i < pairCount; i++) {
+          const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
+          pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
+            <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
+            <select class="form-input" id="pair_edit_${t.id}_${i}_0" style="flex: 1;">
+              <option value="">Выберите игрока...</option>
+              ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[0] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
+            </select>
+            <span style="color: var(--text-muted)">+</span>
+            <select class="form-input" id="pair_edit_${t.id}_${i}_1" style="flex: 1;">
+              <option value="">Выберите игрока...</option>
+              ${slotPlayerIds.map(pid => `<option value="${pid}" ${pair.playerIds[1] === pid ? 'selected' : ''}>${escapeHtml(getPlayerNameById(pid))}</option>`).join('')}
+            </select>
           </div>`;
         }
+        html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
+          <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">🔗 Редактирование пар</div>
+          ${pairsDisplayHtml}
+          <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button class="btn btn-primary" style="flex: 1;" onclick="savePairsChanges('${t.id}')">💾 Сохранить пары</button>
+            <button class="btn btn-secondary" style="flex: 1;" onclick="toggleEditPairs('${t.id}')">❌ Отменить</button>
+          </div>
+        </div>`;
+      } else {
+        // View mode
+        for (let i = 0; i < pairCount; i++) {
+          const pair = t.pairs?.[i] || { id: 'pair_' + i, playerIds: ['', ''], name: `Пара ${i + 1}` };
+          const p1Name = pair.playerIds[0] ? getPlayerNameById(pair.playerIds[0]) : '—';
+          const p2Name = pair.playerIds[1] ? getPlayerNameById(pair.playerIds[1]) : '—';
+          pairsDisplayHtml += `<div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-primary); border-radius: 8px; margin-bottom: 8px;">
+            <span style="font-weight: 600; min-width: 60px;">Пара ${i + 1}:</span>
+            <span style="flex: 1; text-align: center;">${escapeHtml(p1Name)} + ${escapeHtml(p2Name)}</span>
+          </div>`;
+        }
+        html += `<div class="card" style="padding: 16px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 14px; font-weight: 600;">🔗 Пары</div>
+            ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary btn-sm" onclick="toggleEditPairs('${t.id}')">✏️ Редактировать</button>` : ''}
+          </div>
+          ${pairsDisplayHtml}
+          ${isOrganizerOrAdmin && t.status !== 'finished' ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="autoAssignPairs('${t.id}')">🎲 Авто-распределение</button>` : ''}
+        </div>`;
       }
     }
   }
@@ -3552,6 +3586,7 @@ function openTournament(id) {
         html += `<button class="btn btn-primary" onclick="startTournament('${t.id}')">🚀 Начать турнир</button>`;
       } else if (hasSchedule) {
         html += `<button class="btn btn-primary" onclick="finalizeTournament('${t.id}')">🏁 Завершить турнир</button>`;
+        html += `<button class="btn btn-secondary" onclick="openScoreEditModal('${t.id}')">✏️ Редактировать счёт</button>`;
       }
       html += `<button class="btn btn-danger" onclick="handleDeleteTournament(event, '${t.id}')">🗑 Удалить</button>
       </div>`;
@@ -3594,17 +3629,32 @@ function toggleEditPairs(tournamentId) {
 
 async function savePairsChanges(tournamentId) {
   const t = tournaments.find(x => x.id === tournamentId);
-  if (!t || !t.pairs) return;
+  if (!t) {
+    showToast("Ошибка: турнир не найден", "error");
+    return;
+  }
 
-  const newPairs = t.pairs.map((pair, idx) => {
-    const p1 = document.getElementById(`pair_edit_${tournamentId}_${idx}_0`)?.value;
-    const p2 = document.getElementById(`pair_edit_${tournamentId}_${idx}_1`)?.value;
-    return {
-      id: pair.id,
+  // Определяем количество пар
+  const pairCount = t.pairs?.length || (t.totalSlots / 2) || 0;
+  if (pairCount === 0) {
+    showToast("Ошибка: нет пар для сохранения", "error");
+    return;
+  }
+
+  // Собираем данные пар из select-элементов
+  const newPairs = [];
+  for (let idx = 0; idx < pairCount; idx++) {
+    const el1 = document.getElementById(`pair_edit_${tournamentId}_${idx}_0`);
+    const el2 = document.getElementById(`pair_edit_${tournamentId}_${idx}_1`);
+    const p1 = el1 ? el1.value : '';
+    const p2 = el2 ? el2.value : '';
+    const existingPair = t.pairs?.[idx];
+    newPairs.push({
+      id: existingPair?.id || `pair_${idx}`,
       playerIds: [p1, p2],
-      name: pair.name || `Пара ${idx + 1}`
-    };
-  });
+      name: existingPair?.name || `Пара ${idx + 1}`
+    });
+  }
 
   try {
     await db.collection("padel_tournaments").doc(tournamentId).update({
@@ -3613,8 +3663,8 @@ async function savePairsChanges(tournamentId) {
     showToast("Пары обновлены", "success");
     editingPairs = false;
     editingPairsTournamentId = null;
-    await loadTournaments();
-    openTournament(tournamentId);
+    // Даём время на обновление подписки Firestore
+    setTimeout(() => openTournament(tournamentId), 1000);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -3835,7 +3885,8 @@ function checkPairFormationReady() {
     document.getElementById('rrPairFormation').style.display = 'none';
     return;
   }
-  const pairCount = parseInt(document.getElementById('rrPairCount').value);
+  const rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+  const pairCount = rrCfg.pairs;
   const needed = pairCount * 2;
   if (selectedPlayersForTournament.size === needed) {
     document.getElementById('rrPairFormation').style.display = 'block';
@@ -3849,7 +3900,7 @@ function getTournamentSlotPlayerIds() {
   const type = document.getElementById('tournamentType').value;
   let size = 8;
   if (type === 'roundrobin') {
-    size = (parseInt(document.getElementById('rrPairCount').value) || 4) * 2;
+    size = (parseRrConfig(document.getElementById('rrPairCount').value).pairs || 4) * 2;
   } else {
     size = parseInt(document.getElementById('tournamentSize').value) || 8;
   }
@@ -3864,7 +3915,8 @@ function getTournamentSlotPlayerIds() {
 function renderPairFormation() {
   const container = document.getElementById('rrPairsList');
   const playerIds = getTournamentSlotPlayerIds();
-  const pairCount = parseInt(document.getElementById('rrPairCount').value);
+  const rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+  const pairCount = rrCfg.pairs;
 
   let html = '';
   for (let i = 0; i < pairCount; i++) {
@@ -3895,7 +3947,8 @@ function updatePair(pairIdx, playerIdx, playerId) {
 
 function autoFormPairs() {
   const playerIds = getTournamentSlotPlayerIds();
-  const pairCount = parseInt(document.getElementById('rrPairCount').value);
+  const rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+  const pairCount = rrCfg.pairs;
   if (playerIds.length < pairCount * 2) {
     showToast(`Заполните все слоты (${pairCount * 2} игроков) для авто-формирования пар`, "error");
     return;
@@ -3932,11 +3985,13 @@ async function createTournament() {
 
   // Collect slots from selects
   let size, schedule, pairsData = null, points = 24;
+  let rrCfg = null;
   if (type === 'americano') {
     size = parseInt(document.getElementById('tournamentSize').value);
     points = parseInt(document.getElementById('tournamentPoints').value);
   } else {
-    const pairCount = parseInt(document.getElementById('rrPairCount').value);
+    rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+    const pairCount = rrCfg.pairs;
     size = pairCount * 2;
     if (scoringSystem === 'points') {
       points = parseInt(document.getElementById('tournamentPoints').value);
@@ -3966,7 +4021,8 @@ async function createTournament() {
     }
   } else {
     // Round Robin
-    const pairCount = parseInt(document.getElementById('rrPairCount').value);
+    if (!rrCfg) rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+    const pairCount = rrCfg.pairs;
     // Validate all pairs are formed only if all slots filled
     const allFilled = slots.every(s => s.playerId);
     if (allFilled) {
@@ -3976,7 +4032,7 @@ async function createTournament() {
         return;
       }
       pairsData = rrPairs.map(p => ({ id: p.id, playerIds: p.playerIds, name: p.name }));
-      schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
+      schedule = generateRoundRobinSchedule(pairsData, rrCfg.courts);
     }
   }
 
@@ -4010,6 +4066,9 @@ async function createTournament() {
 
     if (pairsData) {
       docData.pairs = pairsData;
+    }
+    if (type === 'roundrobin' && rrCfg) {
+      docData.courts = rrCfg.courts;
     }
 
     const docRef = await db.collection("padel_tournaments").add(docData);
@@ -4386,6 +4445,122 @@ async function clearScore() {
   }
 }
 
+// ===== Score Edit Modal (bulk edit all tournament scores) =====
+let scoreEditState = { tournamentId: null };
+
+function openScoreEditModal(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || !t.schedule) return;
+
+  scoreEditState = { tournamentId };
+  const modal = document.getElementById('scoreEditModal');
+  const content = document.getElementById('scoreEditContent');
+
+  let html = '';
+
+  t.schedule.forEach((round, rIdx) => {
+    html += `<div class="round-card" style="margin-bottom: 16px;">`;
+    html += `<div class="round-header"><span class="round-num">Раунд ${rIdx + 1}</span></div>`;
+
+    round.forEach((match, mIdx) => {
+      const score1 = t.scores?.[`${rIdx}_${mIdx}_0`] ?? '';
+      const score2 = t.scores?.[`${rIdx}_${mIdx}_1`] ?? '';
+
+      let team1Name, team2Name;
+      if (t.type === 'roundrobin' && t.pairs) {
+        const pair1 = t.pairs.find(p => p.id === match.pair1Id);
+        const pair2 = t.pairs.find(p => p.id === match.pair2Id);
+        team1Name = pair1 ? pair1.playerIds.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
+        team2Name = pair2 ? pair2.playerIds.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
+      } else if (match.team1 && Array.isArray(match.team1)) {
+        team1Name = match.team1.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
+        team2Name = match.team2.map(i => getPlayerNameById(t.playerIds[i])).join(' & ');
+      } else {
+        team1Name = match.pair1Players ? match.pair1Players.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
+        team2Name = match.pair2Players ? match.pair2Players.map(pid => getPlayerNameById(pid)).join(' & ') : '?';
+      }
+
+      const isTennis = t.scoringSystem === 'tennis';
+      const points = t.pointsPerMatch || 24;
+      const maxScore = isTennis ? 7 : points;
+
+      html += `<div class="match-row" style="flex-wrap: wrap; gap: 12px;">
+        <span class="match-court">Корт ${match.court}</span>
+        <div class="team" style="flex: 1; min-width: 140px;"><span class="team-players">${team1Name}</span></div>
+        <span class="vs">VS</span>
+        <div class="team" style="flex: 1; min-width: 140px;"><span class="team-players">${team2Name}</span></div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="number" class="form-input" id="score_edit_${rIdx}_${mIdx}_0" value="${score1 !== '' ? score1 : ''}" min="0" max="${maxScore}" style="width: 70px; text-align: center; font-weight: 800; font-size: 16px; padding: 8px;">
+          <span style="color: var(--text-muted);">:</span>
+          <input type="number" class="form-input" id="score_edit_${rIdx}_${mIdx}_1" value="${score2 !== '' ? score2 : ''}" min="0" max="${maxScore}" style="width: 70px; text-align: center; font-weight: 800; font-size: 16px; padding: 8px;">
+        </div>
+      </div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  content.innerHTML = html;
+  modal.classList.add('show');
+}
+
+function closeScoreEditModal() {
+  document.getElementById('scoreEditModal').classList.remove('show');
+  scoreEditState = { tournamentId: null };
+}
+
+async function saveScoreEditModal() {
+  const { tournamentId } = scoreEditState;
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t || !t.schedule) return;
+
+  const updates = {};
+  const newScores = { ...(t.scores || {}) };
+
+  for (let rIdx = 0; rIdx < t.schedule.length; rIdx++) {
+    for (let mIdx = 0; mIdx < t.schedule[rIdx].length; mIdx++) {
+      const el1 = document.getElementById(`score_edit_${rIdx}_${mIdx}_0`);
+      const el2 = document.getElementById(`score_edit_${rIdx}_${mIdx}_1`);
+
+      const v1 = el1 ? el1.value.trim() : '';
+      const v2 = el2 ? el2.value.trim() : '';
+
+      const key1 = `${rIdx}_${mIdx}_0`;
+      const key2 = `${rIdx}_${mIdx}_1`;
+
+      if (v1 === '' && v2 === '') {
+        // Both empty - delete scores
+        updates[`scores.${key1}`] = firebase.firestore.FieldValue.delete();
+        updates[`scores.${key2}`] = firebase.firestore.FieldValue.delete();
+        delete newScores[key1];
+        delete newScores[key2];
+      } else {
+        const s1 = parseInt(v1);
+        const s2 = parseInt(v2);
+
+        if (!isNaN(s1) && s1 >= 0) {
+          updates[`scores.${key1}`] = s1;
+          newScores[key1] = s1;
+        }
+        if (!isNaN(s2) && s2 >= 0) {
+          updates[`scores.${key2}`] = s2;
+          newScores[key2] = s2;
+        }
+      }
+    }
+  }
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update(updates);
+    t.scores = newScores;
+    closeScoreEditModal();
+    openTournament(tournamentId);
+    showToast("Счёт сохранён", "success");
+  } catch (e) {
+    showToast("Ошибка сохранения: " + e.message, "error");
+  }
+}
+
 async function saveTennisScore(tournamentId, roundIdx, matchIdx) {
   const t = tournaments.find(x => x.id === tournamentId);
   if (!t) return;
@@ -4498,8 +4673,8 @@ async function startTournament(tournamentId) {
           });
         }
       }
-      const pairCount = pairsData.length;
-      schedule = generateRoundRobinSchedule(pairsData, pairCount <= 4 ? 1 : 2);
+      const numCourts = t.courts || (pairsData.length <= 4 ? 1 : 2);
+      schedule = generateRoundRobinSchedule(pairsData, numCourts);
     }
 
     if (!schedule) {
@@ -5014,7 +5189,11 @@ function computeRating(mu, sigma) {
 }
 function computeGlobalAvgFromPlayers() {
   let sum = 0, cnt = 0;
-  for (const p of players) { if (typeof p.rating === 'number') { sum += p.rating; cnt++; } }
+  for (const p of players) {
+    if (typeof p.rating === 'number' && (p.eventsPlayed || 0) > 0) {
+      sum += p.rating; cnt++;
+    }
+  }
   return cnt ? sum / cnt : 110;
 }
 
@@ -5359,7 +5538,9 @@ function processTournamentForRecalcTS(t, playerMap) {
 
   let globalAvg = 110;
   const ratingsArr = [];
-  for (const p of Object.values(playerMap)) { ratingsArr.push(p.rating); }
+  for (const p of Object.values(playerMap)) {
+    if ((p.eventsPlayed || 0) > 0) { ratingsArr.push(p.rating); }
+  }
   if (ratingsArr.length) globalAvg = ratingsArr.reduce((a, b) => a + b, 0) / ratingsArr.length;
 
   const tourneyCoeff = calcTournamentCoeff(t, tsRatings, globalAvg);
@@ -7113,7 +7294,7 @@ function renderTournamentSlotInputs() {
   if (type === 'americano') {
     count = parseInt(document.getElementById('tournamentSize').value) || 8;
   } else {
-    count = (parseInt(document.getElementById('rrPairCount').value) || 4) * 2;
+    count = (parseRrConfig(document.getElementById('rrPairCount').value).pairs || 4) * 2;
   }
   if (!container) return;
   let html = '';
@@ -8638,8 +8819,10 @@ init();
       <div class="form-group" id="rrSizeGroup" style="display:none;">
         <label class="form-label">Количество пар (Round Robin)</label>
         <select class="form-select" id="rrPairCount" onchange="renderTournamentSlotInputs()">
-          <option value="4" selected>4 пары (8 игроков, 1 корт)</option>
-          <option value="8">8 пар (16 игроков, 2 корта)</option>
+          <option value="4_1" selected>4 пары (8 игроков, 1 корт)</option>
+          <option value="4_2">4 пары (8 игроков, 2 корта)</option>
+          <option value="8_2">8 пар (16 игроков, 2 корта)</option>
+          <option value="8_4">8 пар (16 игроков, 4 корта)</option>
         </select>
       </div>
       <div class="form-group" id="pointsGroup">
