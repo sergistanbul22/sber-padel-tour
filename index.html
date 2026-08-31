@@ -3204,19 +3204,23 @@ function renderTournaments() {
     const totalSlots = t.totalSlots || t.playerIds?.length || 0;
 
     html += `
-      <div class="card" style="position: relative;">
-        <div style="cursor: pointer; padding: 16px 16px 12px;" onclick="openTournament('${t.id}')">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-            <span class="card-title">${escapeHtml(t.name)}</span>
-            <span class="status-badge ${statusClass}">${statusText}</span>
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <div style="cursor: pointer; flex: 1;" onclick="openTournament('${t.id}')">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+              <span class="card-title">${escapeHtml(t.name)}</span>
+              <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
+            <div style="font-size: 13px; color: var(--text-muted);">
+              📅 ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} · 📍 ${escapeHtml(t.location || '—')}${t.comment ? ' · 💬 ' + escapeHtml(t.comment) : ''} · 👤 ${bookedCount}/${totalSlots} игроков · ${t.type === 'roundrobin' ? '🔄 Round Robin' : `🇺🇸 Americano · ${t.pointsPerMatch || 24} очка`}
+              ${t.createdByName ? `<br>👤 Организатор: ${escapeHtml(t.createdByName)}` : ''}
+            </div>
           </div>
-          <div style="font-size: 13px; color: var(--text-muted); padding-right: 32px;">
-            📅 ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} · 📍 ${escapeHtml(t.location || '—')}${t.comment ? ' · 💬 ' + escapeHtml(t.comment) : ''} · 👤 ${bookedCount}/${totalSlots} игроков · ${t.type === 'roundrobin' ? '🔄 Round Robin' : `🇺🇸 Americano · ${t.pointsPerMatch || 24} очка`}
-            ${t.createdByName ? `<br>👤 Организатор: ${escapeHtml(t.createdByName)}` : ''}
+          <div style="display:flex; gap:8px; align-items:center; margin-left: 8px;">
+            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('tournament', '${t.id}')" title="Поделиться ссылкой">🔁</span>
+            ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить">🗑️</span>` : ''}
           </div>
         </div>
-        ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:8px; min-width:36px; min-height:36px; display:flex; align-items:center; justify-content:center; z-index:2;" onclick="handleDeleteTournament(event, '${t.id}')" title="Удалить">🗑️</div>` : ''}
-        <div style="position:absolute; right:52px; bottom:12px; cursor:pointer; font-size:18px; padding:8px; min-width:36px; min-height:36px; display:flex; align-items:center; justify-content:center; z-index:2;" onclick="event.stopPropagation(); shareTournament('${t.id}')" title="Поделиться">🔁</div>
       </div>
     `;
   });
@@ -5794,14 +5798,18 @@ async function shareTournament(tournamentId) {
   const typeText = t.type === 'roundrobin' ? 'Round Robin' : 'Americano';
   const pointsText = t.type !== 'roundrobin' ? ` · ${t.pointsPerMatch || 24} очка` : '';
 
-  const shareText = `🏆 ${t.name}\n📅 ${formatDateRu(t.date)}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}\n📍 ${t.location || '—'}${t.comment ? '\n💬 ' + t.comment : ''}\n👤 ${bookedCount}/${totalSlots} игроков · ${typeText}${pointsText}`;
+  const baseUrl = window.location.origin + window.location.pathname;
+  const shareUrl = baseUrl + '?tournament=' + encodeURIComponent(tournamentId);
+
+  const shareText = `🏆 ${t.name}\n📅 ${formatDateRu(t.date)}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}\n📍 ${t.location || '—'}${t.comment ? '\n💬 ' + t.comment : ''}\n👤 ${bookedCount}/${totalSlots} игроков · ${typeText}${pointsText}\n\n👉 ${shareUrl}`;
 
   // Try Web Share API first
   if (navigator.share) {
     try {
       await navigator.share({
         title: t.name,
-        text: shareText
+        text: shareText,
+        url: shareUrl
       });
       return;
     } catch (e) {
@@ -5809,21 +5817,21 @@ async function shareTournament(tournamentId) {
     }
   }
 
-  // Fallback: copy to clipboard
+  // Fallback: copy URL to clipboard
   try {
-    await navigator.clipboard.writeText(shareText);
-    showToast("Информация о турнире скопирована", "success");
+    await navigator.clipboard.writeText(shareUrl);
+    showToast("Ссылка на турнир скопирована", "success");
   } catch (e) {
     // Final fallback: select text
     const textarea = document.createElement('textarea');
-    textarea.value = shareText;
+    textarea.value = shareUrl;
     textarea.style.position = 'fixed';
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
     textarea.select();
     document.execCommand('copy');
     document.body.removeChild(textarea);
-    showToast("Информация о турнире скопирована", "success");
+    showToast("Ссылка на турнир скопирована", "success");
   }
 }
 
@@ -6097,13 +6105,14 @@ function subscribeToTrainingMeta() {
 }
 
 function checkUrlHash() {
-  // Parse query param ?training=ID or ?planned-game=ID
+  // Parse query param ?training=ID or ?planned-game=ID or ?tournament=ID
   const params = new URLSearchParams(window.location.search);
   let trainingId = params.get('training');
   let plannedGameId = params.get('planned-game');
+  let tournamentId = params.get('tournament');
   
   // Fallback: try hash #training=ID for backward compatibility
-  if (!trainingId && !plannedGameId) {
+  if (!trainingId && !plannedGameId && !tournamentId) {
     const hash = window.location.hash;
     if (hash && hash.startsWith('#training=')) {
       trainingId = hash.replace('#training=', '').split('&')[0];
@@ -6112,9 +6121,14 @@ function checkUrlHash() {
     }
   }
   
-  console.log('[DEEP-LINK] search:', window.location.search, '| hash:', window.location.hash, '| trainingId:', trainingId, '| plannedGameId:', plannedGameId);
+  console.log('[DEEP-LINK] search:', window.location.search, '| hash:', window.location.hash, '| trainingId:', trainingId, '| plannedGameId:', plannedGameId, '| tournamentId:', tournamentId);
   
-  if (trainingId) {
+  if (tournamentId) {
+    console.log('[DEEP-LINK] Switching to tournaments section...');
+    showSection('tournaments');
+    console.log('[DEEP-LINK] Starting retry loop for tournament modal...');
+    tryOpenTournamentModal(tournamentId, 0);
+  } else if (trainingId) {
     console.log('[DEEP-LINK] Switching to trainings section...');
     showSection('trainings');
     console.log('[DEEP-LINK] Starting retry loop for modal...');
@@ -6194,6 +6208,25 @@ function tryOpenTrainingModal(trainingId, attempt) {
   }
   if (attempt < 15) {
     setTimeout(() => tryOpenTrainingModal(trainingId, attempt + 1), 1000);
+  } else {
+    console.log('[DEEP-LINK] Giving up after', attempt, 'attempts');
+  }
+}
+
+function tryOpenTournamentModal(tournamentId, attempt) {
+  console.log('[DEEP-LINK] Attempt', attempt, 'tournaments loaded:', tournaments.length);
+  if (tournaments.length > 0) {
+    const t = tournaments.find(x => x.id === tournamentId);
+    if (t) {
+      console.log('[DEEP-LINK] Found tournament, opening modal:', tournamentId);
+      openTournament(tournamentId);
+      return;
+    } else {
+      console.log('[DEEP-LINK] Tournament not found in list:', tournamentId);
+    }
+  }
+  if (attempt < 15) {
+    setTimeout(() => tryOpenTournamentModal(tournamentId, attempt + 1), 1000);
   } else {
     console.log('[DEEP-LINK] Giving up after', attempt, 'attempts');
   }
