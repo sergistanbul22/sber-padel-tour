@@ -1431,7 +1431,7 @@
 <section class="section active" id="section-home">
   <div class="hero">
     <h1>SBER <span>PADEL</span> TOUR</h1>
-    <p>Официальная платформа для организации тренировок, игр и турниров по падел теннису в сообществе Сбера. Автоматическое определение рейтинга по системе RTTF.</p>
+    <p>Официальная платформа для организации тренировок, игр и турниров по падел теннису в сообществе Сбера. Автоматическое определение рейтинга по модифицированной системе TrueSkill.</p>
   </div>
 
   <!-- iOS Install Prompt -->
@@ -1471,7 +1471,7 @@
       <span class="card-title">🏅 Общий зачет</span>
       <div class="rating-display">
         <span>Рейтинг:</span>
-        <span class="rating-value">Sber RTTF</span>
+        <span class="rating-value">SberTS</span>
       </div>
     </div>
     <div id="playersList">
@@ -3216,6 +3216,7 @@ function renderTournaments() {
           </div>
         </div>
         ${canEdit(t) ? `<div style="position:absolute; right:16px; bottom:12px; cursor:pointer; font-size:18px; padding:8px; min-width:36px; min-height:36px; display:flex; align-items:center; justify-content:center; z-index:2;" onclick="handleDeleteTournament(event, '${t.id}')" title="Удалить">🗑️</div>` : ''}
+        <div style="position:absolute; right:52px; bottom:12px; cursor:pointer; font-size:18px; padding:8px; min-width:36px; min-height:36px; display:flex; align-items:center; justify-content:center; z-index:2;" onclick="event.stopPropagation(); shareTournament('${t.id}')" title="Поделиться">🔁</div>
       </div>
     `;
   });
@@ -5109,7 +5110,7 @@ async function recalculateTournament(tournamentId) {
 }
 
 // ============================================
-// RTTF RATING SYSTEM
+// TRUESKILL RATING SYSTEM
 // ============================================
 // ============================================
 // TrueSkill Rating System
@@ -5772,7 +5773,58 @@ function handleDeleteTournament(event, tournamentId) {
     event.stopPropagation();
     event.preventDefault();
   }
-  deleteTournament(tournamentId);
+  // Защита от повторного нажатия
+  if (handleDeleteTournament._processing) {
+    showToast("Удаление уже выполняется...", "info");
+    return;
+  }
+  handleDeleteTournament._processing = true;
+  deleteTournament(tournamentId).finally(() => {
+    handleDeleteTournament._processing = false;
+  });
+}
+
+async function shareTournament(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+
+  const slots = t.slots || [];
+  const bookedCount = slots.filter(s => s.playerId).length;
+  const totalSlots = t.totalSlots || t.playerIds?.length || 0;
+  const typeText = t.type === 'roundrobin' ? 'Round Robin' : 'Americano';
+  const pointsText = t.type !== 'roundrobin' ? ` · ${t.pointsPerMatch || 24} очка` : '';
+
+  const shareText = `🏆 ${t.name}\n📅 ${formatDateRu(t.date)}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}\n📍 ${t.location || '—'}${t.comment ? '\n💬 ' + t.comment : ''}\n👤 ${bookedCount}/${totalSlots} игроков · ${typeText}${pointsText}`;
+
+  // Try Web Share API first
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: t.name,
+        text: shareText
+      });
+      return;
+    } catch (e) {
+      // Fallback to clipboard
+    }
+  }
+
+  // Fallback: copy to clipboard
+  try {
+    await navigator.clipboard.writeText(shareText);
+    showToast("Информация о турнире скопирована", "success");
+  } catch (e) {
+    // Final fallback: select text
+    const textarea = document.createElement('textarea');
+    textarea.value = shareText;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast("Информация о турнире скопирована", "success");
+  }
 }
 
 // ============================================
@@ -6892,7 +6944,8 @@ async function applyForTournament(tournamentId) {
       applications: firebase.firestore.FieldValue.arrayUnion(newApp)
     });
     showToast("Заявка подана", "success");
-    openTournament(tournamentId);
+    // Даём время на обновление подписки Firestore
+    setTimeout(() => openTournament(tournamentId), 800);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -6960,7 +7013,7 @@ async function cancelTournamentApplication(tournamentId) {
       applications: updatedApps
     });
     showToast("Заявка отменена", "success");
-    openTournament(tournamentId);
+    setTimeout(() => openTournament(tournamentId), 800);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -6989,7 +7042,7 @@ async function cancelTournamentBooking(tournamentId) {
   try {
     await db.collection("padel_tournaments").doc(tournamentId).update({ slots: updatedSlots });
     showToast("Участие отменено", "success");
-    openTournament(tournamentId);
+    setTimeout(() => openTournament(tournamentId), 800);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
