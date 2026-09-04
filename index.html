@@ -3311,7 +3311,7 @@ function openTournament(id) {
             : '';
           return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
             <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
-            ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmTournamentApplication('${id}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
+            ${canConfirm ? `<div style="display: flex; gap: 4px;"><button class="btn btn-primary btn-sm" onclick="confirmTournamentApplication('${id}', '${app.playerId}')">✓ Подтвердить</button><button class="btn btn-danger btn-sm" onclick="rejectTournamentApplication('${id}', '${app.playerId}')" title="Удалить заявку">🗑</button></div>` : ''}
           </div>`;
         }).join('')
       : '<div style="padding: 8px 0; color: var(--text-muted); font-size: 13px;">Пока нет заявок</div>';
@@ -6545,7 +6545,7 @@ function openPlannedGame(plannedGameId) {
             : '';
           return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
             <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
-            ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmPlannedGameApplication('${plannedGameId}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
+            ${canConfirm ? `<div style="display: flex; gap: 4px;"><button class="btn btn-primary btn-sm" onclick="confirmPlannedGameApplication('${plannedGameId}', '${app.playerId}')">✓ Подтвердить</button><button class="btn btn-danger btn-sm" onclick="rejectPlannedGameApplication('${plannedGameId}', '${app.playerId}')" title="Удалить заявку">🗑</button></div>` : ''}
           </div>`;
         }).join('')
       : '<div style="padding: 8px 0; color: var(--text-muted); font-size: 13px;">Пока нет заявок</div>';
@@ -7047,6 +7047,88 @@ async function cancelTournamentApplication(tournamentId) {
     });
     showToast("Заявка отменена", "success");
     setTimeout(() => openTournament(tournamentId), 800);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+// ========== REJECT APPLICATIONS (admin/organizer) ==========
+async function rejectTournamentApplication(tournamentId, playerId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  if (!isAdmin && !isOrganizer) {
+    showToast("Только организатор или администратор может удалять заявки", "error");
+    return;
+  }
+
+  if (!confirm("Удалить заявку игрока?")) return;
+
+  const applications = t.applications || [];
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_tournaments").doc(tournamentId).update({
+      applications: updatedApps
+    });
+    showToast("Заявка удалена", "success");
+    openTournament(tournamentId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function rejectPlannedGameApplication(plannedGameId, playerId) {
+  const pg = plannedGames.find(x => x.id === plannedGameId);
+  if (!pg) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  if (!isAdmin && !isOrganizer) {
+    showToast("Только организатор или администратор может удалять заявки", "error");
+    return;
+  }
+
+  if (!confirm("Удалить заявку игрока?")) return;
+
+  const applications = pg.applications || [];
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_planned_games").doc(plannedGameId).update({
+      applications: updatedApps
+    });
+    showToast("Заявка удалена", "success");
+    openPlannedGame(plannedGameId);
+  } catch (e) {
+    showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+async function rejectTrainingApplication(trainingId, playerId) {
+  const tr = trainings.find(x => x.id === trainingId);
+  if (!tr) return;
+
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  const isOrganizer = tr.createdBy && tr.createdBy === userEmail;
+  if (!isAdmin && !isOrganizer) {
+    showToast("Только организатор или администратор может удалять заявки", "error");
+    return;
+  }
+
+  if (!confirm("Удалить заявку игрока?")) return;
+
+  const applications = tr.applications || [];
+  const updatedApps = applications.filter(a => a.playerId !== playerId);
+
+  try {
+    await db.collection("padel_trainings").doc(trainingId).update({
+      applications: updatedApps
+    });
+    showToast("Заявка удалена", "success");
+    openTraining(trainingId);
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
@@ -8238,7 +8320,7 @@ function openTraining(trainingId) {
             : '';
           return `<div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px;">
             <span><span style="color: var(--text-muted); font-size: 12px;">#${idx + 1}</span> ${escapeHtml(app.playerName)}${appInfoBtn}</span>
-            ${canConfirm ? `<button class="btn btn-primary btn-sm" onclick="confirmTrainingApplication('${trainingId}', '${app.playerId}')">✓ Подтвердить</button>` : ''}
+            ${canConfirm ? `<div style="display: flex; gap: 4px;"><button class="btn btn-primary btn-sm" onclick="confirmTrainingApplication('${trainingId}', '${app.playerId}')">✓ Подтвердить</button><button class="btn btn-danger btn-sm" onclick="rejectTrainingApplication('${trainingId}', '${app.playerId}')" title="Удалить заявку">🗑</button></div>` : ''}
           </div>`;
         }).join('')
       : '<div style="padding: 8px 0; color: var(--text-muted); font-size: 13px;">Пока нет заявок</div>';
