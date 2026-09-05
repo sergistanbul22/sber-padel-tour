@@ -2121,6 +2121,14 @@ function handleAuthStateChanged(user) {
   }
 
   if (user) {
+    // Записываем время последнего входа
+    const userEmail = (user.email || '').toLowerCase();
+    if (userEmail) {
+      db.collection("users").doc(userEmail).update({
+        lastLoginAt: firebase.firestore.FieldValue.serverTimestamp()
+      }).catch(e => console.log("lastLoginAt update skipped:", e.message));
+    }
+    
     subscribeToUserStatus(user);
     subscribeToTrainingMeta(); // Load training meta after auth is ready
     checkUserStatus().then(() => {
@@ -5887,7 +5895,7 @@ function renderUsers() {
     return nameA.localeCompare(nameB);
   });
 
-  let html = '<div class="table-scroll"><table class="data-table" id="usersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Рейтинг LUNDA</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
+  let html = '<div class="table-scroll"><table class="data-table" id="usersTable"><thead><tr><th>Пользователь</th><th>Логин</th><th>Email</th><th>Telegram</th><th>Рейтинг LUNDA</th><th>Последний вход</th><th>Роль</th><th>Действия</th></tr></thead><tbody>';
   sortedAdmins.forEach(a => {
     // Determine role display
     const role = a.role || (a.isApproved ? 'admin' : 'player');
@@ -5895,6 +5903,19 @@ function renderUsers() {
     if (role === 'superadmin') roleBadge = '<span style="color:var(--accent);font-weight:700;">👑 Суперадмин</span>';
     else if (role === 'admin') roleBadge = '<span style="color:var(--success);">⚙️ Админ</span>';
     else roleBadge = '<span style="color:var(--text-muted);">👤 Игрок</span>';
+
+    // Format last login
+    let lastLoginStr = '-';
+    if (a.lastLoginAt) {
+      const lastLogin = a.lastLoginAt.toDate ? a.lastLoginAt.toDate() : new Date(a.lastLoginAt);
+      const now = new Date();
+      const diffDays = Math.floor((now - lastLogin) / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) lastLoginStr = 'Сегодня';
+      else if (diffDays === 1) lastLoginStr = 'Вчера';
+      else if (diffDays < 30) lastLoginStr = `${diffDays} дн. назад`;
+      else if (diffDays < 365) lastLoginStr = `${Math.floor(diffDays / 30)} мес. назад`;
+      else lastLoginStr = `${Math.floor(diffDays / 365)} г. назад`;
+    }
 
     const isSelf = a.id === (currentUser.email || '').toLowerCase().trim();
     const isSuperAdminUser = isSuperAdminEmail(a.id);
@@ -5907,6 +5928,7 @@ function renderUsers() {
       <td>${escapeHtml(a.recoveryEmail || '-')}</td>
       <td>${escapeHtml(a.telegram || '-')}</td>
       <td>${a.lundaRating ? parseFloat(a.lundaRating).toFixed(2) : '-'}</td>
+      <td>${lastLoginStr}</td>
       <td>${roleBadge}</td>
       <td style="text-align: right; white-space: nowrap;">`;
 
