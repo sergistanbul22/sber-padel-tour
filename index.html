@@ -1895,8 +1895,7 @@ const FIREBASE_CONFIG = {
 // ============================================
 // SUPER ADMIN
 // ============================================
-const SUPER_ADMIN_LOGIN = "6585875box";
-const SUPER_ADMIN_PASS = "Kluha082";
+// Super admin credentials removed - now checked via Firestore role field
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
 const SITE_VERSION = "29.08.2026/9-fixed";
 
@@ -2199,7 +2198,7 @@ async function ensureSuperAdminProfile(userEmail) {
     await db.collection("users").doc(userEmail).set({
       firstName: 'Супер',
       lastName: 'Админ',
-      login: SUPER_ADMIN_LOGIN,
+      login: '6585875box',
       email: userEmail,
       recoveryEmail: '',
       role: 'superadmin',
@@ -2399,15 +2398,18 @@ function signInWithEmail() {
     return;
   }
 
-  // Супер-админ вход
-  if (login === SUPER_ADMIN_LOGIN && password === SUPER_ADMIN_PASS) {
-    const email = SUPER_ADMIN_LOGIN + "@sberpadel.local";
+  const email = login + "@sberpadel.local";
 
-    // Пробуем войти
-    auth.signInWithEmailAndPassword(email, password)
-      .then(() => {
-        closeLoginModal();
-        showToast("Добро пожаловать, Супер-админ!", "success");
+  // Пробуем войти
+  auth.signInWithEmailAndPassword(email, password)
+    .then(() => {
+      closeLoginModal();
+      showToast("Добро пожаловать!", "success");
+    })
+    .catch(err => {
+      showToast("Ошибка входа: " + (err.message || "Неверный логин или пароль"), "error");
+    });
+}
       })
       .catch((err) => {
         // Если не удалось войти - пробуем создать (пользователь ещё не существует)
