@@ -5942,7 +5942,12 @@ function renderUsers() {
     }
 
     if (canDelete) {
-      html += `<button class="btn btn-danger btn-sm" onclick="deleteUser('${a.id}')" style="padding:4px 8px;font-size:11px">🗑️</button>`;
+      html += `<button class="btn btn-danger btn-sm" onclick="deleteUser('${a.id}')" style="margin-right:6px;padding:4px 8px;font-size:11px">🗑️</button>`;
+    }
+    
+    // Password reset buttons (only superadmin)
+    if (isSuperAdmin && !isSuperAdminUser) {
+      html += `<button class="btn btn-secondary btn-sm" onclick="adminResetPassword('${a.id}', '${escapeHtml(a.email || '')}')" style="padding:4px 8px;font-size:11px" title="Сбросить пароль">🔑</button>`;
     }
 
     html += `</td></tr>`;
@@ -5997,6 +6002,73 @@ async function deleteUser(email) {
     await loadUsers();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
+  }
+}
+
+// ========== ADMIN PASSWORD RESET ==========
+async function adminResetPassword(email, authEmail) {
+  if (!isSuperAdmin) {
+    showToast("Только суперадмин может сбрасывать пароли", "error");
+    return;
+  }
+  
+  if (!authEmail) {
+    showToast("У пользователя не указан auth email", "error");
+    return;
+  }
+
+  const choice = confirm("Выберите действие:\n\n• OK — Сгенерировать ссылку сброса\n• Отмена — Установить пароль вручную");
+  
+  if (choice) {
+    // Генерация ссылки
+    try {
+      const response = await fetch('http://43.98.163.72:8080/admin-reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authEmail: authEmail })
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        // Показываем ссылку в модальном окне или промпте
+        const copyLink = confirm(`Ссылка для сброса пароля:\n\n${result.resetLink}\n\nНажмите OK, чтобы скопировать ссылку.`);
+        if (copyLink) {
+          navigator.clipboard.writeText(result.resetLink).then(() => {
+            showToast("Ссылка скопирована в буфер обмена", "success");
+          }).catch(() => {
+            showToast("Ссылка: " + result.resetLink, "success");
+          });
+        }
+      } else {
+        showToast(result.error || "Ошибка", "error");
+      }
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    }
+  } else {
+    // Установка пароля вручную
+    const newPassword = prompt("Введите новый пароль (минимум 6 символов):");
+    if (!newPassword || newPassword.length < 6) {
+      showToast("Пароль должен быть не менее 6 символов", "error");
+      return;
+    }
+    
+    try {
+      const response = await fetch('http://43.98.163.72:8080/admin-set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authEmail: authEmail, newPassword: newPassword })
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        showToast(result.message, "success");
+      } else {
+        showToast(result.error || "Ошибка", "error");
+      }
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    }
   }
 }
 
