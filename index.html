@@ -2884,7 +2884,7 @@ async function sendPasswordReset() {
   }
 
   try {
-    const response = await fetch('https://abs-developer-forwarding-node.trycloudflare.com/reset-password', {
+    const response = await fetch('http://43.98.163.72:8080/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recoveryEmail: recoveryEmail })
