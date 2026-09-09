@@ -5299,6 +5299,13 @@ async function calculateTournamentRatings(tournament, options = {}) {
     }
   }
 
+  // Save old ratings before calculation
+  const oldRatings = {};
+  for (const pid of tournament.playerIds) {
+    const p = players.find(pl => pl.id === pid);
+    oldRatings[pid] = computeRating(p?.mu || 25, p?.sigma || 25/3);
+  }
+
   const globalAvg = computeGlobalAvgFromPlayers();
   const tourneyCoeff = calcTournamentCoeff(tournament, tsRatings, globalAvg);
 
@@ -5377,6 +5384,12 @@ async function calculateTournamentRatings(tournament, options = {}) {
     batch.update(db.collection("padel_players").doc(pid), updates);
   }
   await batch.commit();
+
+  // ratingChanges = actual rating delta (newRating - oldRating)
+  for (const pid of tournament.playerIds) {
+    ratingChanges[pid] = computeRating(tsRatings[pid].mu, tsRatings[pid].sigma) - oldRatings[pid];
+  }
+
   return { ratingChanges, tsChanges };
 }
 
@@ -5444,12 +5457,16 @@ async function calculateGameRatings(game) {
   const ratingChanges = {};
   const tsChanges = {};
   game.pair1.forEach((pid, i) => {
-    ratingChanges[pid] = tsRatings[pid].mu - oldVals[pid].mu;
-    tsChanges[pid] = { muDelta: ratingChanges[pid], sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
+    const oldRating = computeRating(oldVals[pid].mu, oldVals[pid].sigma);
+    const newRating = computeRating(tsRatings[pid].mu, tsRatings[pid].sigma);
+    ratingChanges[pid] = newRating - oldRating;
+    tsChanges[pid] = { muDelta: tsRatings[pid].mu - oldVals[pid].mu, sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
   });
   game.pair2.forEach((pid, i) => {
-    ratingChanges[pid] = tsRatings[pid].mu - oldVals[pid].mu;
-    tsChanges[pid] = { muDelta: ratingChanges[pid], sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
+    const oldRating = computeRating(oldVals[pid].mu, oldVals[pid].sigma);
+    const newRating = computeRating(tsRatings[pid].mu, tsRatings[pid].sigma);
+    ratingChanges[pid] = newRating - oldRating;
+    tsChanges[pid] = { muDelta: tsRatings[pid].mu - oldVals[pid].mu, sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
   });
   return { ratingChanges, tsChanges };
 }
