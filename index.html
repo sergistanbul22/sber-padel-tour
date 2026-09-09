@@ -1602,6 +1602,18 @@
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header">
+      <span class="card-title">📊 Архив рейтингов</span>
+    </div>
+    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+      Сохраняет текущие рейтинги всех игроков в архив с сегодняшней датой. При завершении турнира сохранение происходит автоматически.
+    </p>
+    <button class="btn btn-secondary" onclick="saveDailyRatings()">
+      💾 Сохранить рейтинги в архив
+    </button>
+  </div>
+
+  <div class="card" style="margin-top: 24px;">
+    <div class="card-header">
       <span class="card-title">🔄 Обновление результатов</span>
     </div>
     <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
@@ -1895,8 +1907,7 @@ const FIREBASE_CONFIG = {
 // ============================================
 // SUPER ADMIN
 // ============================================
-const SUPER_ADMIN_LOGIN = "6585875box";
-const SUPER_ADMIN_PASS = "Kluha082";
+// Super admin credentials removed - now checked via Firestore role field
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
 const SITE_VERSION = "29.08.2026/9-fixed";
 
@@ -2199,7 +2210,7 @@ async function ensureSuperAdminProfile(userEmail) {
     await db.collection("users").doc(userEmail).set({
       firstName: 'Супер',
       lastName: 'Админ',
-      login: SUPER_ADMIN_LOGIN,
+      login: '6585875box',
       email: userEmail,
       recoveryEmail: '',
       role: 'superadmin',
@@ -2399,45 +2410,16 @@ function signInWithEmail() {
     return;
   }
 
-  // Супер-админ вход
-  if (login === SUPER_ADMIN_LOGIN && password === SUPER_ADMIN_PASS) {
-    const email = SUPER_ADMIN_LOGIN + "@sberpadel.local";
+  const email = login + "@sberpadel.local";
 
-    // Пробуем войти
-    auth.signInWithEmailAndPassword(email, password)
-      .then(() => {
-        closeLoginModal();
-        showToast("Добро пожаловать, Супер-админ!", "success");
-      })
-      .catch((err) => {
-        // Если не удалось войти - пробуем создать (пользователь ещё не существует)
-        // В Firebase v9+ ошибка 'auth/invalid-login-credentials' вместо 'auth/user-not-found'
-        console.log("Super admin sign in error:", err.code, err.message);
-
-        auth.createUserWithEmailAndPassword(email, password)
-          .then(() => {
-            closeLoginModal();
-            showToast("Супер-админ создан и авторизован", "success");
-          })
-          .catch((createErr) => {
-            if (createErr.code === 'auth/email-already-in-use') {
-              showToast("Ошибка: email уже используется. Возможно, пароль изменился.", "error");
-            } else {
-              showToast("Ошибка: " + createErr.message, "error");
-            }
-          });
-      });
-    return;
-  }
-
-  const email = (login + "@sberpadel.local").toLowerCase();
+  // Пробуем войти
   auth.signInWithEmailAndPassword(email, password)
     .then(() => {
       closeLoginModal();
-      showToast("Вход выполнен", "success");
+      showToast("Добро пожаловать!", "success");
     })
-    .catch((err) => {
-      showToast("Ошибка входа: " + err.message, "error");
+    .catch(err => {
+      showToast("Ошибка входа: " + (err.message || "Неверный логин или пароль"), "error");
     });
 }
 
@@ -4660,6 +4642,54 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
   }
 }
 
+async function saveDailyRatings() {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const docId = `rating_${today}`;
+    
+    // Check if already saved today
+    const existing = await db.collection("rating_archive").doc(docId).get();
+    
+    const playersSnapshot = await db.collection("padel_players").get();
+    const playersData = [];
+    
+    playersSnapshot.forEach(doc => {
+      const data = doc.data();
+      playersData.push({
+        playerId: doc.id,
+        name: data.name || 'Unknown',
+        rating: data.rating || 0,
+        mu: data.mu || 25,
+        sigma: data.sigma || 25/3,
+        medals: data.medals || {},
+        tournamentCount: data.tournamentCount || 0,
+        tournamentsPlayed: data.tournamentsPlayed || 0
+      });
+    });
+    
+    // Sort by rating desc
+    playersData.sort((a, b) => b.rating - a.rating);
+    
+    await db.collection("rating_archive").doc(docId).set({
+      date: today,
+      savedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      playersCount: playersData.length,
+      players: playersData
+    });
+    
+    if (existing.exists) {
+      showToast(`Рейтинги за ${today} обновлены в архиве`, "success");
+    } else {
+      showToast(`Рейтинги за ${today} сохранены в архив`, "success");
+    }
+    
+    return true;
+  } catch (e) {
+    showToast("Ошибка сохранения рейтингов: " + e.message, "error");
+    return false;
+  }
+}
+
 async function startTournament(tournamentId) {
   const t = tournaments.find(x => x.id === tournamentId);
   if (!t) return;
@@ -4743,6 +4773,30 @@ async function finalizeTournament(tournamentId) {
     // Get playerIds from slots (for backward compat)
     const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
     const allPlayerIds = t.playerIds && t.playerIds.length > 0 ? t.playerIds : slotPlayerIds;
+
+    // Check if at least half of the games have scores entered
+    if (t.schedule && t.schedule.length > 0) {
+      let totalMatches = 0;
+      let scoredMatches = 0;
+      
+      t.schedule.forEach((round, rIdx) => {
+        round.forEach((match, mIdx) => {
+          totalMatches++;
+          const s0 = t.scores && (t.scores[`${rIdx}_${mIdx}_0`] !== undefined) ? t.scores[`${rIdx}_${mIdx}_0`] : null;
+          const s1 = t.scores && (t.scores[`${rIdx}_${mIdx}_1`] !== undefined) ? t.scores[`${rIdx}_${mIdx}_1`] : null;
+          // Check if scores are actually entered (not null, not empty string)
+          if (s0 !== null && s1 !== null && s0 !== '' && s1 !== '') {
+            scoredMatches++;
+          }
+        });
+      });
+      
+      if (totalMatches > 0 && scoredMatches < totalMatches / 2) {
+        showToast(`Нельзя завершить турнир: внесены счета только для ${scoredMatches} из ${totalMatches} матчей (требуется минимум ${Math.ceil(totalMatches / 2)}).`, "error");
+        locks.finalizeTournament = false;
+        return;
+      }
+    }
 
     // Calculate points per player
     const playerPoints = {};
@@ -4890,6 +4944,9 @@ async function finalizeTournament(tournamentId) {
       updateData.pairLeaderboard = pairLeaderboard;
     }
     await db.collection("padel_tournaments").doc(tournamentId).update(updateData);
+
+    // Save daily ratings backup
+    await saveDailyRatings();
 
     showToast("Турнир завершен! Медали вручены.", "success");
     closeModal();
@@ -5774,10 +5831,18 @@ async function deleteTournament(tournamentId) {
       }
     }
 
-    // Now delete tournament
+    // Archive tournament before deletion
+    const archiveData = {
+      ...t,
+      archivedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      originalId: tournamentId
+    };
+    await db.collection("padel_tournaments_archive").doc(tournamentId).set(archiveData);
+    
+    // Now delete tournament from main collection
     await db.collection("padel_tournaments").doc(tournamentId).delete();
 
-    showToast("Турнир удален", "success");
+    showToast("Турнир удален и перенесен в архив", "success");
     closeModal();
     await loadTournaments();
     await loadPlayers();
