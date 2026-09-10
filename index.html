@@ -5001,65 +5001,85 @@ async function recalculateTournament(tournamentId) {
     const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
     const allPlayerIds = [...new Set([...(t.playerIds || []), ...slotPlayerIds])];
 
-    // 1. Отнимаем старые медали
-    if (t.leaderboard) {
-      for (let i = 0; i < Math.min(3, t.leaderboard.length); i++) {
-        const pid = t.leaderboard[i].playerId;
-        const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-        const pRef = db.collection("padel_players").doc(pid);
-        const pDoc = await pRef.get();
-        if (pDoc.exists) {
-          const pData = pDoc.data();
-          const current = pData.medals?.[medalType] || 0;
-          if (current > 0) {
-            await pRef.update({
-              [`medals.${medalType}`]: Math.max(0, current - 1)
-            });
+    // ======================
+    // 1. FULL ROLLBACK (same logic as deleteTournament)
+    // ======================
+    for (const pid of allPlayerIds) {
+      const pRef = db.collection("padel_players").doc(pid);
+      const pDoc = await pRef.get();
+      if (!pDoc.exists) continue;
+      const pData = pDoc.data();
+      let updates = {
+        tournamentCount: Math.max(0, (pData.tournamentCount || 0) - 1)
+      };
+
+      // Rollback medals from leaderboard (Americano)
+      if (t.leaderboard && t.leaderboard.length > 0) {
+        const top3 = t.leaderboard.slice(0, 3);
+        for (let i = 0; i < top3.length; i++) {
+          if (top3[i].playerId === pid) {
+            const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+            updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
           }
         }
       }
-    }
-
-    // 1.5. Откатываем старые изменения рейтинга и бонусы
-    const rollbackBatch = db.batch();
-    for (const pid of allPlayerIds) {
-      const p = players.find(pl => pl.id === pid);
-      if (!p) continue;
-
-      const currentRating = typeof p.rating === 'number' ? p.rating : 100;
-      let newRating = currentRating;
-
-      // Откат базовых изменений рейтинга
-      if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
-        newRating -= t.ratingChanges[pid];
+      // Rollback medals from pairLeaderboard (Round Robin)
+      if (t.pairLeaderboard && t.pairLeaderboard.length > 0) {
+        const top3Pairs = t.pairLeaderboard.slice(0, 3);
+        for (let i = 0; i < top3Pairs.length; i++) {
+          if (top3Pairs[i].playerIds && top3Pairs[i].playerIds.includes(pid)) {
+            const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
+            updates[`medals.${medalType}`] = Math.max(0, (pData.medals?.[medalType] || 0) - 1);
+          }
+        }
       }
-      // Откат бонусов за топ-3
+
+      // Rollback TrueSkill changes (prefer tsChanges, fallback to ratingChanges)
+      if (t.tsChanges && t.tsChanges[pid]) {
+        const currMu = pData.mu !== undefined ? pData.mu : 25;
+        const currSigma = pData.sigma !== undefined ? pData.sigma : 25 / 3;
+        updates.mu = currMu - (t.tsChanges[pid].muDelta || 0);
+        updates.sigma = Math.max(0.1, currSigma - (t.tsChanges[pid].sigmaDelta || 0));
+        updates.rating = computeRating(updates.mu, updates.sigma);
+      } else if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
+        // Legacy fallback
+        const currentRating = typeof pData.rating === 'number' ? pData.rating : 100;
+        updates.rating = Math.max(1, Math.round(currentRating - t.ratingChanges[pid]));
+      }
+
+      // Rollback rating bonuses (legacy)
       if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
-        newRating -= t.ratingBonuses[pid];
+        const baseRating = updates.rating !== undefined ? updates.rating : (typeof pData.rating === 'number' ? pData.rating : 100);
+        updates.rating = Math.max(1, Math.round(baseRating - t.ratingBonuses[pid]));
       }
 
-      rollbackBatch.update(db.collection("padel_players").doc(pid), {
-        rating: Math.max(1, Math.round(newRating))
-      });
-    }
-    await rollbackBatch.commit();
+      // Decrement tournamentsPlayed
+      updates.tournamentsPlayed = Math.max(0, (pData.tournamentsPlayed || 0) - 1);
 
-    // Обновляем локальный кэш игроков после отката
-    for (const pid of allPlayerIds) {
-      const p = players.find(pl => pl.id === pid);
-      if (p) {
-        let newRating = typeof p.rating === 'number' ? p.rating : 100;
-        if (t.ratingChanges && typeof t.ratingChanges[pid] === 'number') {
-          newRating -= t.ratingChanges[pid];
-        }
-        if (t.ratingBonuses && typeof t.ratingBonuses[pid] === 'number') {
-          newRating -= t.ratingBonuses[pid];
-        }
-        p.rating = Math.max(1, Math.round(newRating));
+      await pRef.update(updates);
+
+      // Update local cache
+      const localP = players.find(pl => pl.id === pid);
+      if (localP) {
+        if (updates.mu !== undefined) localP.mu = updates.mu;
+        if (updates.sigma !== undefined) localP.sigma = updates.sigma;
+        if (updates.rating !== undefined) localP.rating = updates.rating;
+        if (updates.tournamentsPlayed !== undefined) localP.tournamentsPlayed = updates.tournamentsPlayed;
+        if (updates.tournamentCount !== undefined) localP.tournamentCount = updates.tournamentCount;
+        // Update medals from dot-notation keys
+        ['gold', 'silver', 'bronze'].forEach(medalType => {
+          const key = `medals.${medalType}`;
+          if (updates[key] !== undefined) {
+            if (!localP.medals) localP.medals = {};
+            localP.medals[medalType] = updates[key];
+          }
+        });
       }
     }
 
-    // 2. Пересчитываем очки
+    // ======================
+    // 2. Recalculate points and leaderboard
+    // ======================
     const playerPoints = {};
     allPlayerIds.forEach(id => playerPoints[id] = 0);
 
@@ -5069,75 +5089,44 @@ async function recalculateTournament(tournamentId) {
           const s0 = t.scores[`${rIdx}_${mIdx}_0`] || 0;
           const s1 = t.scores[`${rIdx}_${mIdx}_1`] || 0;
 
-          // Support both old format (team1/team2 as indices) and new format (pair1Players/pair2Players as IDs)
           const team1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => allPlayerIds[idx]) : []);
           const team2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => allPlayerIds[idx]) : []);
 
-          team1Ids.forEach(pid => {
-            playerPoints[pid] = (playerPoints[pid] || 0) + s0;
-          });
-
-          team2Ids.forEach(pid => {
-            playerPoints[pid] = (playerPoints[pid] || 0) + s1;
-          });
+          team1Ids.forEach(pid => { playerPoints[pid] = (playerPoints[pid] || 0) + s0; });
+          team2Ids.forEach(pid => { playerPoints[pid] = (playerPoints[pid] || 0) + s1; });
         });
       });
     }
 
-    // 3. Новый leaderboard
+    // 3. Build new leaderboard
     let leaderboard = [];
     let pairLeaderboard = [];
 
     if (t.type === 'roundrobin' && t.pairs) {
-      // Round Robin: pair-based stats
       const pairStats = {};
       for (const pair of t.pairs) {
         pairStats[pair.id] = {
-          pairId: pair.id,
-          pairName: pair.name || `Пара ${pair.id}`,
-          playerIds: pair.playerIds,
-          wins: 0,
-          losses: 0,
-          gamesFor: 0,
-          gamesAgainst: 0,
-          gameDiff: 0
+          pairId: pair.id, pairName: pair.name || `Пара ${pair.id}`,
+          playerIds: pair.playerIds, wins: 0, losses: 0,
+          gamesFor: 0, gamesAgainst: 0, gameDiff: 0
         };
       }
-
       if (t.schedule && t.scores) {
         t.schedule.forEach((round, rIdx) => {
           round.forEach((match, mIdx) => {
             const s0 = t.scores[`${rIdx}_${mIdx}_0`] || 0;
             const s1 = t.scores[`${rIdx}_${mIdx}_1`] || 0;
-            const p1 = match.pair1Id;
-            const p2 = match.pair2Id;
-
+            const p1 = match.pair1Id, p2 = match.pair2Id;
             if (!pairStats[p1] || !pairStats[p2]) return;
-
-            pairStats[p1].gamesFor += s0;
-            pairStats[p1].gamesAgainst += s1;
-            pairStats[p2].gamesFor += s1;
-            pairStats[p2].gamesAgainst += s0;
-
-            if (s0 > s1) {
-              pairStats[p1].wins++;
-              pairStats[p2].losses++;
-            } else if (s1 > s0) {
-              pairStats[p1].losses++;
-              pairStats[p2].wins++;
-            }
+            pairStats[p1].gamesFor += s0; pairStats[p1].gamesAgainst += s1;
+            pairStats[p2].gamesFor += s1; pairStats[p2].gamesAgainst += s0;
+            if (s0 > s1) { pairStats[p1].wins++; pairStats[p2].losses++; }
+            else if (s1 > s0) { pairStats[p1].losses++; pairStats[p2].wins++; }
           });
         });
       }
-
-      for (const ps of Object.values(pairStats)) {
-        ps.gameDiff = ps.gamesFor - ps.gamesAgainst;
-      }
-
-      pairLeaderboard = Object.values(pairStats)
-        .sort((a, b) => b.wins - a.wins || b.gameDiff - a.gameDiff);
-
-      // Individual leaderboard from pairs
+      for (const ps of Object.values(pairStats)) ps.gameDiff = ps.gamesFor - ps.gamesAgainst;
+      pairLeaderboard = Object.values(pairStats).sort((a, b) => b.wins - a.wins || b.gameDiff - a.gameDiff);
       for (const pair of pairLeaderboard) {
         for (const pid of pair.playerIds) {
           leaderboard.push({ playerId: pid, points: pair.gameDiff });
@@ -5145,20 +5134,20 @@ async function recalculateTournament(tournamentId) {
         }
       }
     } else {
-      // Americano: individual points
       leaderboard = Object.entries(playerPoints)
         .map(([playerId, points]) => ({ playerId, points }))
         .sort((a, b) => b.points - a.points);
     }
 
-    // 4. Новые медали
+    // ======================
+    // 4. Award new medals
+    // ======================
     const winners = {};
     if (t.type === 'roundrobin' && pairLeaderboard.length > 0) {
-      // Round Robin: medals by pairs
       for (let i = 0; i < Math.min(3, pairLeaderboard.length); i++) {
         const pair = pairLeaderboard[i];
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-        winners[i + 1] = pair.playerIds; // Save pair playerIds as array
+        winners[i + 1] = pair.playerIds;
         for (const pid of pair.playerIds) {
           await db.collection("padel_players").doc(pid).update({
             [`medals.${medalType}`]: firebase.firestore.FieldValue.increment(1)
@@ -5166,42 +5155,43 @@ async function recalculateTournament(tournamentId) {
         }
       }
     } else {
-      // Americano: individual medals
       for (let i = 0; i < Math.min(3, leaderboard.length); i++) {
         const pid = leaderboard[i].playerId;
         const medalType = i === 0 ? 'gold' : i === 1 ? 'silver' : 'bronze';
-        winners[i + 1] = [pid]; // Save as array for consistency
+        winners[i + 1] = [pid];
         await db.collection("padel_players").doc(pid).update({
           [`medals.${medalType}`]: firebase.firestore.FieldValue.increment(1)
         });
       }
     }
 
-    // 5. Сохраняем обновлённые итоги
+    // ======================
+    // 5. Save updated results to tournament doc
+    // ======================
     const updateData = {
       leaderboard: leaderboard,
       winners: winners,
       recalculatedAt: firebase.firestore.FieldValue.serverTimestamp()
     };
-    if (pairLeaderboard.length > 0) {
-      updateData.pairLeaderboard = pairLeaderboard;
-    }
+    if (pairLeaderboard.length > 0) updateData.pairLeaderboard = pairLeaderboard;
     await db.collection("padel_tournaments").doc(tournamentId).update(updateData);
-
-    // 6. Обновляем локальные данные
     t.leaderboard = leaderboard;
     t.winners = winners;
+    if (pairLeaderboard.length > 0) t.pairLeaderboard = pairLeaderboard;
 
-    // Пересчитываем рейтинги (без изменения счётчиков)
+    // ======================
+    // 6. Recalculate TrueSkill ratings
+    // ======================
     const tsResult = await calculateTournamentRatings(t, { skipEventsPlayed: true });
 
-    // Сохраняем новые рейтинговые изменения в документ турнира
     await db.collection("padel_tournaments").doc(tournamentId).update({
       ratingChanges: tsResult?.ratingChanges || {},
-      tsChanges: tsResult?.tsChanges || {}
+      tsChanges: tsResult?.tsChanges || {},
+      muChanges: tsResult?.muChanges || {}
     });
     t.ratingChanges = tsResult?.ratingChanges || {};
     t.tsChanges = tsResult?.tsChanges || {};
+    t.muChanges = tsResult?.muChanges || {};
 
     showToast("Итоги пересчитаны!", "success");
     openTournament(tournamentId);
