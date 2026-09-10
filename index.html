@@ -1602,6 +1602,18 @@
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header">
+      <span class="card-title">📊 Архив рейтингов</span>
+    </div>
+    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+      Сохраняет текущие рейтинги всех игроков в архив с сегодняшней датой. При завершении турнира сохранение происходит автоматически.
+    </p>
+    <button class="btn btn-secondary" onclick="saveDailyRatings()">
+      💾 Сохранить рейтинги в архив
+    </button>
+  </div>
+
+  <div class="card" style="margin-top: 24px;">
+    <div class="card-header">
       <span class="card-title">🔄 Обновление результатов</span>
     </div>
     <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
@@ -2174,7 +2186,9 @@ async function ensureSuperAdminProfile(userEmail) {
         name: 'Супер Админ',
         medals: { gold: 0, silver: 0, bronze: 0 },
         tournamentCount: 0,
-        rating: 100,
+        rating: 0,
+        mu: 25,
+        sigma: 25 / 3,
         tournamentsPlayed: 0,
         eventsPlayed: 0,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2189,7 +2203,9 @@ async function ensureSuperAdminProfile(userEmail) {
       name: 'Супер Админ',
       medals: { gold: 0, silver: 0, bronze: 0 },
       tournamentCount: 0,
-      rating: 100,
+      rating: 0,
+      mu: 25,
+      sigma: 25 / 3,
       tournamentsPlayed: 0,
       eventsPlayed: 0,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -2508,7 +2524,9 @@ async function registerUser() {
         name: playerName,
         medals: { gold: 0, silver: 0, bronze: 0 },
         tournamentCount: 0,
-        rating: 100,
+        rating: 0,
+        mu: 25,
+        sigma: 25 / 3,
         tournamentsPlayed: 0,
         eventsPlayed: 0,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -3083,7 +3101,9 @@ async function addNewPlayer() {
       name: name,
       medals: { gold: 0, silver: 0, bronze: 0 },
       tournamentCount: 0,
-      rating: 100,
+      rating: 0,
+      mu: 25,
+      sigma: 25 / 3,
       tournamentsPlayed: 0,
       eventsPlayed: 0,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -3576,7 +3596,13 @@ function openTournament(id) {
       if (!hasSchedule && allSlotsFilled) {
         html += `<button class="btn btn-primary" onclick="startTournament('${t.id}')">🚀 Начать турнир</button>`;
       } else if (hasSchedule) {
-        html += `<button class="btn btn-primary" onclick="finalizeTournament('${t.id}')">🏁 Завершить турнир</button>`;
+        html += `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn btn-primary" onclick="finalizeTournament('${t.id}')">🏁 Завершить турнир</button>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;color:var(--text-secondary);">
+            <input type="checkbox" id="skipPublish-${t.id}" style="width:16px;height:16px;cursor:pointer;">
+            <span>Не публиковать результаты</span>
+          </label>
+        </div>`;
         html += `<button class="btn btn-secondary" onclick="openScoreEditModal('${t.id}')">✏️ Редактировать счёт</button>`;
       }
       html += `<button class="btn btn-danger" onclick="handleDeleteTournament(event, '${t.id}')">🗑 Удалить</button>
@@ -4630,6 +4656,54 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
   }
 }
 
+async function saveDailyRatings() {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const docId = `rating_${today}`;
+    
+    // Check if already saved today
+    const existing = await db.collection("rating_archive").doc(docId).get();
+    
+    const playersSnapshot = await db.collection("padel_players").get();
+    const playersData = [];
+    
+    playersSnapshot.forEach(doc => {
+      const data = doc.data();
+      playersData.push({
+        playerId: doc.id,
+        name: data.name || 'Unknown',
+        rating: data.rating || 0,
+        mu: data.mu || 25,
+        sigma: data.sigma || 25/3,
+        medals: data.medals || {},
+        tournamentCount: data.tournamentCount || 0,
+        tournamentsPlayed: data.tournamentsPlayed || 0
+      });
+    });
+    
+    // Sort by rating desc
+    playersData.sort((a, b) => b.rating - a.rating);
+    
+    await db.collection("rating_archive").doc(docId).set({
+      date: today,
+      savedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      playersCount: playersData.length,
+      players: playersData
+    });
+    
+    if (existing.exists) {
+      showToast(`Рейтинги за ${today} обновлены в архиве`, "success");
+    } else {
+      showToast(`Рейтинги за ${today} сохранены в архив`, "success");
+    }
+    
+    return true;
+  } catch (e) {
+    showToast("Ошибка сохранения рейтингов: " + e.message, "error");
+    return false;
+  }
+}
+
 async function startTournament(tournamentId) {
   const t = tournaments.find(x => x.id === tournamentId);
   if (!t) return;
@@ -4703,6 +4777,10 @@ async function finalizeTournament(tournamentId) {
     return;
   }
 
+  // Check skipPublish checkbox
+  const skipPublishCheckbox = document.getElementById(`skipPublish-${tournamentId}`);
+  const skipPublish = skipPublishCheckbox ? skipPublishCheckbox.checked : false;
+
   if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
   locks.finalizeTournament = true;
 
@@ -4713,6 +4791,30 @@ async function finalizeTournament(tournamentId) {
     // Get playerIds from slots (for backward compat)
     const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
     const allPlayerIds = t.playerIds && t.playerIds.length > 0 ? t.playerIds : slotPlayerIds;
+
+    // Check if at least half of the games have scores entered
+    if (t.schedule && t.schedule.length > 0) {
+      let totalMatches = 0;
+      let scoredMatches = 0;
+      
+      t.schedule.forEach((round, rIdx) => {
+        round.forEach((match, mIdx) => {
+          totalMatches++;
+          const s0 = t.scores && (t.scores[`${rIdx}_${mIdx}_0`] !== undefined) ? t.scores[`${rIdx}_${mIdx}_0`] : null;
+          const s1 = t.scores && (t.scores[`${rIdx}_${mIdx}_1`] !== undefined) ? t.scores[`${rIdx}_${mIdx}_1`] : null;
+          // Check if scores are actually entered (not null, not empty string)
+          if (s0 !== null && s1 !== null && s0 !== '' && s1 !== '') {
+            scoredMatches++;
+          }
+        });
+      });
+      
+      if (totalMatches > 0 && scoredMatches < totalMatches / 2) {
+        showToast(`Нельзя завершить турнир: внесены счета только для ${scoredMatches} из ${totalMatches} матчей (требуется минимум ${Math.ceil(totalMatches / 2)}).`, "error");
+        locks.finalizeTournament = false;
+        return;
+      }
+    }
 
     // Calculate points per player
     const playerPoints = {};
@@ -4845,7 +4947,11 @@ async function finalizeTournament(tournamentId) {
 
     // Calculate ratings with TrueSkill
     t.leaderboard = leaderboard;
+    console.log("[finalizeTournament] Calling calculateTournamentRatings...");
     const tsResult = await calculateTournamentRatings(t);
+    console.log("[finalizeTournament] tsResult:", tsResult);
+    console.log("[finalizeTournament] ratingChanges:", JSON.stringify(tsResult?.ratingChanges));
+    console.log("[finalizeTournament] tsChanges:", JSON.stringify(tsResult?.tsChanges));
 
     // Update tournament
     const updateData = {
@@ -4854,12 +4960,18 @@ async function finalizeTournament(tournamentId) {
       winners: winners,
       finishedAt: firebase.firestore.FieldValue.serverTimestamp(),
       ratingChanges: tsResult?.ratingChanges || {},
-      tsChanges: tsResult?.tsChanges || {}
+      tsChanges: tsResult?.tsChanges || {},
+      muChanges: tsResult?.muChanges || {},
+      skipPublish: skipPublish
     };
+    console.log("[finalizeTournament] Saving updateData:", JSON.stringify(updateData));
     if (pairLeaderboard.length > 0) {
       updateData.pairLeaderboard = pairLeaderboard;
     }
     await db.collection("padel_tournaments").doc(tournamentId).update(updateData);
+
+    // Save daily ratings backup
+    await saveDailyRatings();
 
     showToast("Турнир завершен! Медали вручены.", "success");
     closeModal();
@@ -5148,23 +5260,20 @@ const TrueSkill = (function() {
 
 // Weight & coefficient helpers
 const MAX_SCORE_DIFF = 6;
-const BONUS_PERCENTAGES = { 1: 0.25, 2: 0.15, 3: 0.08 };
-function calcTennisWeight(s1, s2) { return Math.max(0.05, Math.min(1.0, Math.abs(s1 - s2) / MAX_SCORE_DIFF)); }
+function calcTennisWeight(s1, s2) { return Math.abs(s1 - s2) / MAX_SCORE_DIFF; }
 function calcAmericanoWeight(s1, s2, ppm) {
-  const base = Math.max(0.1, Math.min(1.0, ppm / 50));
-  const diff = Math.abs(s1 - s2);
-  if (ppm <= 0) return base * 0.05;
-  return base * Math.max(0.05, Math.min(1.0, diff / ppm));
+  if (ppm <= 0) return 0.02;
+  return (ppm / 50) * (Math.abs(s1 - s2) / ppm);
 }
-function calcTournamentCoeff(tournament, playerRatings, globalAvg) {
+function calcTournamentCoeff(tournament, playerRatings, globalAvgMu) {
   const pids = tournament.playerIds || [];
   if (!pids.length) return 1.0;
   const vals = [];
   for (const pid of pids) { if (playerRatings[pid]) vals.push(playerRatings[pid].mu); }
   if (!vals.length) return 1.0;
-  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-  const coeff = (avg / (globalAvg || 25)) * (pids.length / 8);
-  return Math.max(0.5, Math.min(3.0, coeff));
+  const avgMu = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const coeff = (avgMu / (globalAvgMu || 25)) * (pids.length / 8);
+  return coeff;
 }
 function getPlaceFromWinners(winners, pid) {
   if (!winners) return null;
@@ -5181,11 +5290,11 @@ function computeRating(mu, sigma) {
 function computeGlobalAvgFromPlayers() {
   let sum = 0, cnt = 0;
   for (const p of players) {
-    if (typeof p.rating === 'number' && (p.eventsPlayed || 0) > 0) {
-      sum += p.rating; cnt++;
+    if (typeof p.mu === 'number' && (p.eventsPlayed || 0) > 0) {
+      sum += p.mu; cnt++;
     }
   }
-  return cnt ? sum / cnt : 110;
+  return cnt ? sum / cnt : 25;
 }
 
 // ============================================
@@ -5198,12 +5307,29 @@ async function calculateTournamentRatings(tournament, options = {}) {
   }
   if (!tournament.schedule) return;
 
+  // Ensure players are loaded (loadPlayers() is empty, so load directly if needed)
+  if (!players || players.length === 0) {
+    try {
+      const snap = await db.collection("padel_players").get();
+      players = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      console.log("[calculateTournamentRatings] Loaded players directly:", players.length);
+    } catch(e) {
+      console.error("[calculateTournamentRatings] Failed to load players:", e);
+    }
+  }
+
   const skipEventsPlayed = options.skipEventsPlayed || false;
-  const isAmericano = tournament.type === 'americano';
+  const isAmericano = tournament.type === 'americano' || (!tournament.type && tournament.pointsPerMatch);
   const ppm = tournament.pointsPerMatch || 21;
 
   const tsRatings = {};
-  for (const pid of tournament.playerIds) {
+  const slotPlayerIds = (tournament.slots || []).filter(s => s.playerId).map(s => s.playerId);
+  const allPlayerIds = tournament.playerIds && tournament.playerIds.length > 0 ? tournament.playerIds : slotPlayerIds;
+  
+  console.log("[calculateTournamentRatings] allPlayerIds:", allPlayerIds.length, allPlayerIds);
+  console.log("[calculateTournamentRatings] players loaded:", players.length);
+  
+  for (const pid of allPlayerIds) {
     const p = players.find(pl => pl.id === pid);
     if (p && typeof p.mu === 'number' && typeof p.sigma === 'number') {
       tsRatings[pid] = new TrueSkill.Rating(p.mu, p.sigma);
@@ -5212,12 +5338,21 @@ async function calculateTournamentRatings(tournament, options = {}) {
     }
   }
 
+  // Save old ratings before calculation
+  const oldRatings = {};
+  for (const pid of allPlayerIds) {
+    const p = players.find(pl => pl.id === pid);
+    oldRatings[pid] = computeRating(p?.mu || 25, p?.sigma || 25/3);
+  }
+  
+  console.log("[calculateTournamentRatings] oldRatings sample:", allPlayerIds.slice(0, 3).map(id => ({id, old: oldRatings[id]})));
+
   const globalAvg = computeGlobalAvgFromPlayers();
   const tourneyCoeff = calcTournamentCoeff(tournament, tsRatings, globalAvg);
 
   const ratingChanges = {};
   const tsChanges = {};
-  for (const pid of tournament.playerIds) { ratingChanges[pid] = 0; tsChanges[pid] = { muDelta: 0, sigmaDelta: 0 }; }
+  for (const pid of allPlayerIds) { ratingChanges[pid] = 0; tsChanges[pid] = { muDelta: 0, sigmaDelta: 0 }; }
   let matchesInTourney = 0;
   const muChanges = {};
 
@@ -5229,8 +5364,8 @@ async function calculateTournamentRatings(tournament, options = {}) {
       const s1 = tournament.scores[`${rIdx}_${mIdx}_1`] || 0;
       if (s0 === s1) continue;
 
-      const t1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => tournament.playerIds[idx]).filter(Boolean) : []);
-      const t2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => tournament.playerIds[idx]).filter(Boolean) : []);
+      const t1Ids = match.pair1Players || (match.team1 ? match.team1.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
+      const t2Ids = match.pair2Players || (match.team2 ? match.team2.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
       if (!t1Ids.length || !t2Ids.length) continue;
 
       const team1 = t1Ids.map(pid => tsRatings[pid]).filter(Boolean);
@@ -5267,9 +5402,10 @@ async function calculateTournamentRatings(tournament, options = {}) {
     }
   }
 
-  // Place bonuses
+  // Place bonuses removed in v6.1
+  /*
   if (matchesInTourney > 0 && tournament.winners) {
-    for (const pid of tournament.playerIds) {
+    for (const pid of allPlayerIds) {
       const place = getPlaceFromWinners(tournament.winners, pid);
       if (place && BONUS_PERCENTAGES[place]) {
         const bonus = (muChanges[pid] || 0) * BONUS_PERCENTAGES[place];
@@ -5279,9 +5415,10 @@ async function calculateTournamentRatings(tournament, options = {}) {
       }
     }
   }
+  */
 
   const batch = db.batch();
-  for (const pid of tournament.playerIds) {
+  for (const pid of allPlayerIds) {
     const p = players.find(pl => pl.id === pid);
     if (!p) continue;
     const updates = { rating: computeRating(tsRatings[pid].mu, tsRatings[pid].sigma), mu: tsRatings[pid].mu, sigma: tsRatings[pid].sigma };
@@ -5290,7 +5427,29 @@ async function calculateTournamentRatings(tournament, options = {}) {
     batch.update(db.collection("padel_players").doc(pid), updates);
   }
   await batch.commit();
-  return { ratingChanges, tsChanges };
+  console.log("[calculateTournamentRatings] Batch committed for", allPlayerIds.length, "players");
+
+  try {
+    // ratingChanges = actual rating delta (newRating - oldRating) — для корректного отката при удалении
+    // muChanges = mu delta — для отображения на UI
+    const muChanges = {};
+    for (const pid of allPlayerIds) {
+      const newMu = tsRatings[pid].mu;
+      const newSigma = tsRatings[pid].sigma;
+      const newRating = computeRating(newMu, newSigma);
+      const oldRating = oldRatings[pid];
+      ratingChanges[pid] = newRating - oldRating;
+      muChanges[pid] = tsChanges[pid].muDelta;
+      console.log(`[RatingCalc] ${pid}: old=${oldRating}, new=${newRating}, ratingDelta=${ratingChanges[pid]}, muDelta=${muChanges[pid]}`);
+    }
+    
+    console.log("[calculateTournamentRatings] FINAL ratingChanges:", ratingChanges);
+    console.log("[calculateTournamentRatings] FINAL muChanges:", muChanges);
+    return { ratingChanges, tsChanges, muChanges };
+  } catch (e) {
+    console.error("[calculateTournamentRatings] POST-BATCH ERROR:", e);
+    return { ratingChanges, tsChanges, muChanges: {} };
+  }
 }
 
 // ============================================
@@ -5357,12 +5516,16 @@ async function calculateGameRatings(game) {
   const ratingChanges = {};
   const tsChanges = {};
   game.pair1.forEach((pid, i) => {
-    ratingChanges[pid] = tsRatings[pid].mu - oldVals[pid].mu;
-    tsChanges[pid] = { muDelta: ratingChanges[pid], sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
+    const oldRating = computeRating(oldVals[pid].mu, oldVals[pid].sigma);
+    const newRating = computeRating(tsRatings[pid].mu, tsRatings[pid].sigma);
+    ratingChanges[pid] = newRating - oldRating;
+    tsChanges[pid] = { muDelta: tsRatings[pid].mu - oldVals[pid].mu, sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
   });
   game.pair2.forEach((pid, i) => {
-    ratingChanges[pid] = tsRatings[pid].mu - oldVals[pid].mu;
-    tsChanges[pid] = { muDelta: ratingChanges[pid], sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
+    const oldRating = computeRating(oldVals[pid].mu, oldVals[pid].sigma);
+    const newRating = computeRating(tsRatings[pid].mu, tsRatings[pid].sigma);
+    ratingChanges[pid] = newRating - oldRating;
+    tsChanges[pid] = { muDelta: tsRatings[pid].mu - oldVals[pid].mu, sigmaDelta: tsRatings[pid].sigma - oldVals[pid].sigma };
   });
   return { ratingChanges, tsChanges };
 }
@@ -5385,7 +5548,7 @@ async function recalculateAllResults() {
     playersSnap.docs.forEach(doc => {
       const d = doc.data();
       playerMap[doc.id] = {
-        id: doc.id, name: d.name || '', rating: 100,
+        id: doc.id, name: d.name || '', rating: 0,
         mu: 25, sigma: 25 / 3,
         tournamentsPlayed: 0, tournamentCount: 0,
         medals: { gold: 0, silver: 0, bronze: 0 }, eventsPlayed: 0
@@ -5458,15 +5621,18 @@ function processTournamentForRecalcTS(t, playerMap) {
   }
   const sched = t.schedule || [];
   const scores = t.scores || {};
-  const isAmericano = t.type === 'americano';
+  const isAmericano = t.type === 'americano' || (!t.type && t.pointsPerMatch);
   const ppm = t.pointsPerMatch || 21;
 
-  for (const pid of (t.playerIds || [])) {
+  const slotPlayerIds = (t.slots || []).filter(s => s.playerId).map(s => s.playerId);
+  const allPlayerIds = t.playerIds && t.playerIds.length > 0 ? t.playerIds : slotPlayerIds;
+
+  for (const pid of allPlayerIds) {
     if (playerMap[pid]) playerMap[pid].tournamentCount++;
   }
 
   const playerPoints = {};
-  for (const pid of (t.playerIds || [])) playerPoints[pid] = 0;
+  for (const pid of allPlayerIds) playerPoints[pid] = 0;
   let pairLeaderboard = [];
 
   if (sched.length > 0 && t.type === 'roundrobin' && t.pairs) {
@@ -5496,8 +5662,8 @@ function processTournamentForRecalcTS(t, playerMap) {
       round.forEach((match, mIdx) => {
         const s0 = scores[`${rIdx}_${mIdx}_0`] || 0;
         const s1 = scores[`${rIdx}_${mIdx}_1`] || 0;
-        const t1 = match.pair1Players || (match.team1 ? match.team1.map(idx => t.playerIds[idx]).filter(Boolean) : []);
-        const t2 = match.pair2Players || (match.team2 ? match.team2.map(idx => t.playerIds[idx]).filter(Boolean) : []);
+        const t1 = match.pair1Players || (match.team1 ? match.team1.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
+        const t2 = match.pair2Players || (match.team2 ? match.team2.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
         t1.forEach(pid => { if (pid) playerPoints[pid] = (playerPoints[pid] || 0) + s0; });
         t2.forEach(pid => { if (pid) playerPoints[pid] = (playerPoints[pid] || 0) + s1; });
       });
@@ -5522,23 +5688,23 @@ function processTournamentForRecalcTS(t, playerMap) {
   }
 
   const tsRatings = {};
-  for (const pid of (t.playerIds || [])) {
+  for (const pid of allPlayerIds) {
     const p = playerMap[pid];
     tsRatings[pid] = new TrueSkill.Rating(p ? p.mu : 25, p ? p.sigma : 25 / 3);
   }
 
-  let globalAvg = 110;
-  const ratingsArr = [];
+  let globalAvg = 25;
+  const muArr = [];
   for (const p of Object.values(playerMap)) {
-    if ((p.eventsPlayed || 0) > 0) { ratingsArr.push(p.rating); }
+    if ((p.eventsPlayed || 0) > 0) { muArr.push(p.mu); }
   }
-  if (ratingsArr.length) globalAvg = ratingsArr.reduce((a, b) => a + b, 0) / ratingsArr.length;
+  if (muArr.length) globalAvg = muArr.reduce((a, b) => a + b, 0) / muArr.length;
 
   const tourneyCoeff = calcTournamentCoeff(t, tsRatings, globalAvg);
   const ratingChanges = {};
   const tsChanges = {};
   const muChanges = {};
-  for (const pid of (t.playerIds || [])) { ratingChanges[pid] = 0; tsChanges[pid] = { muDelta: 0, sigmaDelta: 0 }; }
+  for (const pid of allPlayerIds) { ratingChanges[pid] = 0; tsChanges[pid] = { muDelta: 0, sigmaDelta: 0 }; }
 
   if (sched.length > 0) {
     sched.forEach((round, rIdx) => {
@@ -5546,8 +5712,8 @@ function processTournamentForRecalcTS(t, playerMap) {
         const s0 = scores[`${rIdx}_${mIdx}_0`] || 0;
         const s1 = scores[`${rIdx}_${mIdx}_1`] || 0;
         if (s0 === s1) return;
-        const t1 = match.pair1Players || (match.team1 ? match.team1.map(idx => t.playerIds[idx]).filter(Boolean) : []);
-        const t2 = match.pair2Players || (match.team2 ? match.team2.map(idx => t.playerIds[idx]).filter(Boolean) : []);
+        const t1 = match.pair1Players || (match.team1 ? match.team1.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
+        const t2 = match.pair2Players || (match.team2 ? match.team2.map(idx => allPlayerIds[idx]).filter(Boolean) : []);
         if (!t1.length || !t2.length) return;
         const team1 = t1.map(pid => tsRatings[pid]).filter(Boolean);
         const team2 = t2.map(pid => tsRatings[pid]).filter(Boolean);
@@ -5583,8 +5749,10 @@ function processTournamentForRecalcTS(t, playerMap) {
     });
   }
 
+  // Place bonuses removed in v6.1
+  /*
   if (t.winners) {
-    for (const pid of (t.playerIds || [])) {
+    for (const pid of allPlayerIds) {
       const place = getPlaceFromWinners(t.winners, pid);
       if (place && BONUS_PERCENTAGES[place]) {
         const bonus = (muChanges[pid] || 0) * BONUS_PERCENTAGES[place];
@@ -5594,8 +5762,9 @@ function processTournamentForRecalcTS(t, playerMap) {
       }
     }
   }
+  */
 
-  for (const pid of (t.playerIds || [])) {
+  for (const pid of allPlayerIds) {
     if (!playerMap[pid]) continue;
     playerMap[pid].mu = tsRatings[pid].mu;
     playerMap[pid].sigma = tsRatings[pid].sigma;
@@ -5663,7 +5832,26 @@ async function deleteTournament(tournamentId) {
     return;
   }
 
-  const t = tournaments.find(x => x.id === tournamentId);
+  let t = tournaments.find(x => x.id === tournamentId);
+  console.log("[deleteTournament] local tournament found:", !!t, "ID:", tournamentId);
+  
+  // Fallback: load directly from Firestore if not in local cache
+  if (!t) {
+    try {
+      const doc = await db.collection("padel_tournaments").doc(tournamentId).get();
+      if (doc.exists) {
+        t = { id: doc.id, ...doc.data() };
+        console.log("[deleteTournament] loaded from Firestore:", !!t);
+      }
+    } catch(e) {
+      console.error("[deleteTournament] failed to load from Firestore:", e);
+    }
+  }
+  
+  if (!t) {
+    showToast("Турнир не найден", "error");
+    return;
+  }
   if (!canEdit(t)) {
     showToast("Только администраторы или создатели могут удалять турниры", "error");
     return;
@@ -5744,10 +5932,17 @@ async function deleteTournament(tournamentId) {
       }
     }
 
-    // Now delete tournament
-    await db.collection("padel_tournaments").doc(tournamentId).delete();
+    // Delete tournament (archive via server - Firestore rules don't allow browser write to archive collection)
+    try {
+      await db.collection("padel_tournaments").doc(tournamentId).delete();
+      console.log("[deleteTournament] Tournament deleted:", tournamentId);
+    } catch (deleteErr) {
+      console.error("[deleteTournament] Failed to delete tournament:", deleteErr);
+      showToast("Ошибка удаления: " + deleteErr.message, "error");
+      return;
+    }
 
-    showToast("Турнир удален", "success");
+    showToast("Турнир удалён", "success");
     closeModal();
     await loadTournaments();
     await loadPlayers();
