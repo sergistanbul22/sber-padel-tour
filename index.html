@@ -5251,6 +5251,16 @@ const TrueSkill = (function() {
 // Weight & coefficient helpers
 const MAX_SCORE_DIFF = 6;
 function calcTennisWeight(s1, s2) { return Math.abs(s1 - s2) / MAX_SCORE_DIFF; }
+function calcTennisScoreWeightTotal(sets) {
+  let total1 = 0, total2 = 0;
+  for (const s of sets) {
+    total1 += (s.score1 || 0);
+    total2 += (s.score2 || 0);
+  }
+  const diff = Math.abs(total1 - total2);
+  const maxDiff = sets.length * MAX_SCORE_DIFF;
+  return diff / maxDiff;
+}
 function calcAmericanoWeight(s1, s2, ppm) {
   if (ppm <= 0) return 0.02;
   return (ppm / 50) * (Math.abs(s1 - s2) / ppm);
@@ -5470,8 +5480,7 @@ async function calculateGameRatings(game) {
   const team2 = game.pair2.map(pid => tsRatings[pid]).filter(Boolean);
   if (team1.length !== 2 || team2.length !== 2) return;
 
-  const fs = game.sets[0];
-  const scoreWeight = calcTennisWeight(fs.score1 || 0, fs.score2 || 0);
+  const scoreWeight = calcTennisScoreWeightTotal(game.sets);
   const oldVals = {};
   for (const pid of allIds) oldVals[pid] = { mu: tsRatings[pid].mu, sigma: tsRatings[pid].sigma };
 
@@ -5785,8 +5794,7 @@ function processGameForRecalcTS(g, playerMap) {
   const team2 = g.pair2.map(pid => tsRatings[pid]).filter(Boolean);
   if (team1.length !== 2 || team2.length !== 2) return;
 
-  const fs = g.sets[0];
-  const sw = calcTennisWeight(fs.score1 || 0, fs.score2 || 0);
+  const sw = calcTennisScoreWeightTotal(g.sets);
   const oldVals = {};
   for (const pid of allIds) oldVals[pid] = { mu: tsRatings[pid].mu, sigma: tsRatings[pid].sigma };
 
