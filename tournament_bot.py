@@ -671,21 +671,87 @@ def poll_commands():
 def send_trainings_list(chat_id):
     try:
         db = init_firebase()
-        docs = db.collection("padel_trainings").order_by("date").limit(10).stream()
+        # Only future trainings, ordered by date
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        docs = db.collection("padel_trainings").where("date", ">=", today).order_by("date").limit(20).stream()
+        
         lines = ["🎾 <b>Ближайшие тренировки:</b>\n"]
+        count = 0
+        
         for doc in docs:
             d = doc.to_dict()
             date = d.get("date", "")
-            time = d.get("time", "")
+            time_start = d.get("timeStart", "")
+            time_end = d.get("timeEnd", "")
+            location = d.get("location", "")
+            group = d.get("group", "")
             coach = d.get("coach", "")
-            level = d.get("level", "")
-            t = f"📅 {date}"
-            if time: t += f" ⏰ {time}"
-            if coach: t += f" | {coach}"
-            if level: t += f" | {level}"
-            lines.append(t)
-        if len(lines) == 1:
+            training_type = d.get("trainingType", "open")
+            total_slots = d.get("totalSlots", 4)
+            slots = d.get("slots", []) or []
+            applications = d.get("applications", []) or []
+            
+            # Count booked
+            booked = len([s for s in slots if s.get("playerId")])
+            
+            # Count applications for closed trainings
+            pending_apps = len([a for a in applications if a.get("playerId") and a.get("status") != "approved"])
+            
+            # Format date nicely
+            try:
+                from datetime import datetime as dt
+                date_obj = dt.strptime(date, "%Y-%m-%d")
+                weekdays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+                wd = weekdays[date_obj.weekday()]
+                months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря']
+                date_str = f"{wd} {date_obj.day} {months[date_obj.month-1]}"
+            except:
+                date_str = date
+            
+            # Time
+            time_str = ""
+            if time_start and time_end:
+                time_str = f"{time_start}–{time_end}"
+            elif time_start:
+                time_str = time_start
+            
+            # Type
+            type_label = "🔒 Закрытая (по заявкам)" if training_type == "closed" else "🔓 Открытая"
+            
+            # Build line
+            info = f"📅 {date_str}"
+            if time_str:
+                info += f" | ⏰ {time_str}"
+            if location:
+                info += f"\n📍 {location}"
+            if group:
+                info += f"\n👥 Группа: {group}"
+            if coach:
+                info += f"\n🎯 Тренер: {coach}"
+            info += f"\n{type_label}"
+            
+            if training_type == "closed":
+                info += f"\n👤 Мест: {total_slots} | Заявок: {len(applications)} | Подтверждено: {booked}"
+                if pending_apps > 0:
+                    info += f" | Ожидают: {pending_apps}"
+            else:
+                info += f"\n👤 Мест: {booked}/{total_slots}"
+                if booked >= total_slots:
+                    info += " ✅ Полностью набрана"
+                else:
+                    remaining = total_slots - booked
+                    info += f" (осталось {remaining})"
+            
+            # Link
+            info += f"\n👉 <a href='https://sber-padel-tour.ru/?training={doc.id}'>Записаться / Подать заявку</a>"
+            
+            lines.append(info + "\n")
+            count += 1
+        
+        if count == 0:
             lines.append("Нет предстоящих тренировок")
+        
         send_telegram("\n".join(lines), chat_id)
     except Exception as e:
         print(f"[ERROR] Trainings list: {e}")
