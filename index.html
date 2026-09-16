@@ -20,6 +20,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
 
   <style>
   :root {
@@ -2016,6 +2017,45 @@ const locks = {
   finishGame: false,
   createTraining: false
 };
+
+// ============================================
+// CLOUD FUNCTIONS (серверный расчёт рейтингов)
+// ============================================
+// Мастер-переключатель: false = сайт считает локально (старая логика сохранена ниже)
+const CLOUD_FUNCTIONS_ENABLED = true;
+const CF_REGION = 'europe-west1';
+let _cfInstances = {};
+
+function cfCallable(name) {
+  if (!_cfInstances[name]) {
+    _cfInstances[name] = firebase.app().functions(CF_REGION).httpsCallable(name);
+  }
+  return _cfInstances[name];
+}
+
+// Дружелюбные сообщения для кодов ошибок callable
+function cfFriendlyError(e) {
+  const code = String(e.code || '').replace('functions/', '').toLowerCase();
+  const map = {
+    'unauthenticated': 'Нужно войти в аккаунт',
+    'permission-denied': 'Недостаточно прав для этой операции',
+    'not-found': 'Объект не найден в базе',
+    'invalid-argument': 'Некорректные параметры',
+    'unavailable': 'Сервер недоступен, попробуйте позже',
+    'internal': 'Внутренняя ошибка сервера'
+  };
+  if (code === 'failed-precondition') return e.message || 'Операция сейчас недоступна';
+  return map[code] || (e.message ? e.message : 'Ошибка сервера');
+}
+
+async function callCloudFn(name, data) {
+  try {
+    const res = await cfCallable(name)(data || {});
+    return res.data;
+  } catch (e) {
+    throw new Error(cfFriendlyError(e));
+  }
+}
 
 // ============================================
 // INIT
@@ -4666,6 +4706,17 @@ async function updateScoreAuto(tournamentId, roundIdx, matchIdx, value) {
 }
 
 async function saveDailyRatings() {
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      const res = await callCloudFn('archiveRatings', {});
+      showToast(`Рейтинги за ${res.date || new Date().toISOString().split('T')[0]} сохранены в архив (${res.playersCount || 0} игроков)`, "success");
+      return true;
+    } catch (e) {
+      showToast("Ошибка сохранения рейтингов: " + e.message, "error");
+      return false;
+    }
+  }
+
   try {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const docId = `rating_${today}`;
@@ -4792,6 +4843,21 @@ async function finalizeTournament(tournamentId) {
 
   if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
   locks.finalizeTournament = true;
+
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      await callCloudFn('finalizeTournament', { tournamentId, skipPublish });
+      showToast("Турнир завершен! Медали вручены.", "success");
+      closeModal();
+      await loadTournaments();
+      await loadPlayers();
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    } finally {
+      locks.finalizeTournament = false;
+    }
+    return;
+  }
 
   try {
     const t = tournaments.find(x => x.id === tournamentId);
@@ -4995,6 +5061,18 @@ async function finalizeTournament(tournamentId) {
 
 async function recalculateTournament(tournamentId) {
   if (!confirm("Пересчитать итоги турнира? Старые медали и рейтинги будут скорректированы.")) return;
+
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      await callCloudFn('recalculateTournament', { tournamentId });
+      showToast("Итоги турнира пересчитаны", "success");
+      await loadTournaments();
+      await loadPlayers();
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    }
+    return;
+  }
 
   try {
     let t = tournaments.find(x => x.id === tournamentId);
@@ -5548,6 +5626,19 @@ async function recalculateAllResults() {
   }
   if (!confirm("Пересчитать все результаты? Медали, рейтинги (mu, sigma) и счётчики будут обнулены и пересчитаны заново по всем завершённым играм и турнирам в хронологическом порядке.")) return;
 
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      showToast("Полный пересчёт начался...", "info");
+      const res = await callCloudFn('recalculateAllResults', {});
+      showToast(`Пересчёт завершён: событий — ${res.eventsProcessed || 0}, игроков — ${res.playersProcessed || 0}`, "success");
+      await loadTournaments();
+      await loadPlayers();
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    }
+    return;
+  }
+
   try {
     showToast("Полный пересчёт начался...", "info");
 
@@ -5866,6 +5957,18 @@ async function deleteTournament(tournamentId) {
   if (!confirm("Удалить турнир? Это действие нельзя отменить.")) return;
 
   deleteTournament._processing = true;
+
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    callCloudFn('deleteTournament', { tournamentId })
+      .then(async () => {
+        showToast("Турнир удалён", "success");
+        await loadTournaments();
+        await loadPlayers();
+      })
+      .catch(e => showToast("Ошибка: " + e.message, "error"))
+      .finally(() => { deleteTournament._processing = false; });
+    return;
+  }
 
   try {
     // Find tournament data before deletion
@@ -8104,6 +8207,20 @@ async function finishGame(gameId) {
   if (!confirm("Завершить игру? Это действие нельзя отменить.")) return;
   locks.finishGame = true;
 
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      await callCloudFn('finalizeGame', { gameId });
+      closeGameModal();
+      showToast("Игра завершена. Рейтинги обновлены.", "success");
+      await loadPlayers();
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    } finally {
+      locks.finishGame = false;
+    }
+    return;
+  }
+
   try {
     const g = games.find(x => x.id === gameId);
     if (!g) return;
@@ -8134,6 +8251,17 @@ async function deleteGame(gameId) {
     return;
   }
   if (!confirm("Удалить игру? Это действие нельзя отменить.")) return;
+
+  if (CLOUD_FUNCTIONS_ENABLED) {
+    try {
+      await callCloudFn('deleteGame', { gameId });
+      showToast("Игра удалена", "success");
+      await loadPlayers();
+    } catch (e) {
+      showToast("Ошибка: " + e.message, "error");
+    }
+    return;
+  }
 
   try {
     const g = games.find(x => x.id === gameId);
