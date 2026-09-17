@@ -13,15 +13,44 @@ import time
 import signal
 import requests
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth
+
+# ========== ПРОВЕРКА НА ДУБЛИ ==========
+_skip_single_instance = False
+
+def check_single_instance():
+    """Проверяет, что бот запущен только в одном экземпляре"""
+    if _skip_single_instance:
+        return
+    import subprocess
+    import time
+    time.sleep(1)
+    script_name = os.path.basename(__file__)
+    result = subprocess.run(
+        ['pgrep', '-f', f'bot_venv/bin/python3 {script_name}'],
+        capture_output=True, text=True
+    )
+    pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
+    current_pid = str(os.getpid())
+    other_pids = [p for p in pids if p != current_pid]
+    if other_pids:
+        print(f"[ERROR] Бот уже запущен (PID: {', '.join(other_pids)}). Завершение.")
+        sys.exit(1)
+
+if '--force' not in sys.argv:
+    check_single_instance()
+else:
+    _skip_single_instance = True
+    print("[INFO] Запуск с --force, пропускаем проверку на дубли.")
 
 # ========== НАСТРОЙКИ ==========
 TELEGRAM_BOT_TOKEN = "8763865911:AAG2xHWXlYuT54ElXy1PgtQ8HuZQnjXdlIg"
 CHAT_ID_SBER_PADEL = "-1002556296907"
 CHAT_ID_PRO = "-4794823132"
+ADMIN_CHAT_ID = "228493828"  # Личные сообщения администратору
 ALL_CHAT_IDS = [CHAT_ID_SBER_PADEL, CHAT_ID_PRO]
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-TRAINING_BOOKING_CHAT_ID = "-1002556296907"  # SBER-PADEL для уведомлений о записях
+TRAINING_BOOKING_CHAT_ID = "-1002556296907"  # Группа SBER-PADEL для уведомлений о записях на открытые тренировки
 FIREBASE_KEY_FILE = os.path.join(os.path.dirname(__file__), "sberpt-firebase-key.json")
 
 # Tracking files
@@ -48,6 +77,8 @@ def init_firebase():
 # ========== PLAYER NAMES CACHE ==========
 _player_names_cache = {}
 _player_ratings_cache = {}
+_player_mu_cache = {}
+_player_sigma_cache = {}
 _players_watch = None
 
 def listen_player_names(db):
@@ -58,9 +89,13 @@ def listen_player_names(db):
                 d = change.document.to_dict()
                 _player_names_cache[change.document.id] = d.get("name", change.document.id)
                 _player_ratings_cache[change.document.id] = d.get("rating", 0)
+                _player_mu_cache[change.document.id] = d.get("mu", 0)
+                _player_sigma_cache[change.document.id] = d.get("sigma", 0)
             elif change.type.name == 'REMOVED':
                 _player_names_cache.pop(change.document.id, None)
                 _player_ratings_cache.pop(change.document.id, None)
+                _player_mu_cache.pop(change.document.id, None)
+                _player_sigma_cache.pop(change.document.id, None)
         print(f"[OK] Игроков в кэше: {len(_player_names_cache)}")
     _players_watch = db.collection("padel_players").on_snapshot(on_players_snapshot)
 
@@ -98,6 +133,42 @@ def get_player_rating(pid):
         print(f"[WARN] get_player_rating fallback failed for {pid}: {e}")
     return 0
 
+def get_player_mu(pid):
+    if not pid:
+        return 0
+    mu = _player_mu_cache.get(pid)
+    if mu is not None:
+        return mu
+    try:
+        doc = db.collection("padel_players").document(pid).get()
+        if doc.exists:
+            m = doc.to_dict().get("mu", 0)
+            _player_mu_cache[pid] = m
+            return m
+    except Exception as e:
+        print(f"[WARN] get_player_mu fallback failed for {pid}: {e}")
+    return 0
+
+def get_player_sigma(pid):
+    if not pid:
+        return 0
+    sigma = _player_sigma_cache.get(pid)
+    if sigma is not None:
+        return sigma
+    try:
+        doc = db.collection("padel_players").document(pid).get()
+        if doc.exists:
+            s = doc.to_dict().get("sigma", 0)
+            _player_sigma_cache[pid] = s
+            return s
+    except Exception as e:
+        print(f"[WARN] get_player_sigma fallback failed for {pid}: {e}")
+    return 0
+
+def _compute_rating(mu, sigma):
+    """Calculate display rating from mu and sigma (same formula as website)."""
+    return max(0, round((mu - 3 * sigma) * 10))
+
 # ========== SENT EVENTS TRACKING ==========
 def load_sent_ids(filepath):
     if not os.path.exists(filepath):
@@ -119,8 +190,32 @@ def save_sent_ids(filepath, id_set):
     except Exception as e:
         print(f"[WARN] Ошибка сохранения {filepath}: {e}")
 
+# ========== BOT MODE (production / test) ==========
+BOT_MODE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_mode.json")
+TEST_PREFIX = "🧪 <b>[ТЕСТ-РЕЖИМ]</b>\n\n"
+
+
+def get_bot_mode():
+    """Текущий режим бота: 'production' (в группы) или 'test' (всё админу в ЛС)."""
+    try:
+        with open(BOT_MODE_FILE, "r", encoding="utf-8") as f:
+            m = json.load(f).get("mode", "production")
+            return m if m in ("production", "test") else "production"
+    except Exception:
+        return "production"
+
+
+def set_bot_mode(mode):
+    with open(BOT_MODE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"mode": mode}, f, ensure_ascii=False)
+
+
 # ========== TELEGRAM ==========
 def send_telegram(text, chat_id):
+    # В режиме тестирования всё, что адресовано группам, перенаправляется админу в ЛС
+    if get_bot_mode() == "test" and str(chat_id) in [str(c) for c in ALL_CHAT_IDS]:
+        chat_id = ADMIN_CHAT_ID
+        text = TEST_PREFIX + text
     try:
         resp = requests.post(
             f"{TELEGRAM_API}/sendMessage",
@@ -134,6 +229,9 @@ def send_telegram(text, chat_id):
         return False
 
 def send_to_all(text):
+    if get_bot_mode() == "test":
+        send_telegram(TEST_PREFIX + text, ADMIN_CHAT_ID)
+        return
     for cid in ALL_CHAT_IDS:
         send_telegram(text, cid)
 
@@ -145,56 +243,101 @@ def format_game(data, doc_id):
     pair1 = data.get("pair1", [])
     pair2 = data.get("pair2", [])
     sets = data.get("sets", [])
+    ts_changes = data.get("tsChanges", {})
     rating_changes = data.get("ratingChanges", {})
+    has_ts_changes = bool(ts_changes)
     
     if pair1 and pair2:
         # New format
         # Determine winner by counting won sets
         pair1_wins = 0
         pair2_wins = 0
-        set_scores = []
+        raw_set_scores = []
         for s in sets:
             s1 = s.get("score1", 0)
             s2 = s.get("score2", 0)
-            set_scores.append(f"{s1}:{s2}")
+            raw_set_scores.append((s1, s2))
             if s1 > s2:
                 pair1_wins += 1
             elif s2 > s1:
                 pair2_wins += 1
         
-        # Winner first
+        # Winner first — swap teams AND scores together (same as website's getGameDisplayOrder)
         if pair1_wins >= pair2_wins:
             winners, losers = pair1, pair2
+            set_scores = [f"{a}:{b}" for a, b in raw_set_scores]
         else:
             winners, losers = pair2, pair1
+            set_scores = [f"{b}:{a}" for a, b in raw_set_scores]
+        
+        # Compute pre-game rating (тот, что был ДО этой игры)
+        # Приоритет: авторитетный снимок из документа (писала функция в той же транзакции),
+        # fallback — математика от живого кэша (legacy-документы).
+        ratings_before_map = data.get("ratingsBefore", {}) or {}
+        ratings_after_map = data.get("ratingsAfter", {}) or {}
+        
+        def _pre_game_rating(pid):
+            snap = ratings_before_map.get(pid)
+            if snap is not None and snap.get("rating") is not None:
+                return snap["rating"]
+            ts = ts_changes.get(pid, {})
+            if ts:
+                mu = get_player_mu(pid)
+                sigma = get_player_sigma(pid)
+                mu_before = mu - ts.get("muDelta", 0)
+                sigma_before = sigma - ts.get("sigmaDelta", 0)
+                return _compute_rating(mu_before, sigma_before)
+            # Legacy fallback: use ratingChanges
+            return get_player_rating(pid) - rating_changes.get(pid, 0)
         
         def fmt_player(pid):
+            # В скобках — рейтинг ДО игры
             name = get_player_name(pid)
-            rating = get_player_rating(pid)
-            return f"{name} ({rating:.0f})"
+            return f"{name} ({_pre_game_rating(pid):.0f})"
         
         w1, w2 = fmt_player(winners[0]), fmt_player(winners[1])
         l1, l2 = fmt_player(losers[0]), fmt_player(losers[1])
         
-        sum_win = sum(get_player_rating(pid) - rating_changes.get(pid, 0) for pid in winners)
-        sum_lose = sum(get_player_rating(pid) - rating_changes.get(pid, 0) for pid in losers)
+        sum_win = sum(_pre_game_rating(pid) for pid in winners)
+        sum_lose = sum(_pre_game_rating(pid) for pid in losers)
         
         score_line = " ".join(set_scores)
         
-        # Rating changes lines
+        # Rating changes lines — из снимков документа (fallback — кэш-математика)
         rating_lines = []
         for pid in winners + losers:
-            before = get_player_rating(pid) - rating_changes.get(pid, 0)
-            after = get_player_rating(pid)
-            change = rating_changes.get(pid, 0)
+            before_snap = ratings_before_map.get(pid)
+            after_snap = ratings_after_map.get(pid)
+            if before_snap is not None and before_snap.get("rating") is not None:
+                rating_before = before_snap["rating"]
+                if after_snap is not None and after_snap.get("rating") is not None:
+                    rating_after = after_snap["rating"]
+                else:
+                    rating_after = rating_before + rating_changes.get(pid, 0)
+                change = rating_after - rating_before
+            else:
+                ts = ts_changes.get(pid, {})
+                if ts:
+                    mu = get_player_mu(pid)
+                    sigma = get_player_sigma(pid)
+                    mu_before = mu - ts.get("muDelta", 0)
+                    sigma_before = sigma - ts.get("sigmaDelta", 0)
+                    rating_before = _compute_rating(mu_before, sigma_before)
+                    rating_after = get_player_rating(pid)
+                    change = rating_after - rating_before
+                else:
+                    # Legacy fallback
+                    rating_before = get_player_rating(pid) - rating_changes.get(pid, 0)
+                    rating_after = get_player_rating(pid)
+                    change = rating_changes.get(pid, 0)
             arrow = "📈" if change > 0 else "📉"
-            rating_lines.append(f"{before:.0f} {arrow} {after:.0f} ({change:+.0f})")
+            rating_lines.append(f"{rating_before:.0f} {arrow} {rating_after:.0f} ({change:+.0f})")
         
         ratings_text = "\n".join(rating_lines)
         
         return (
             f"🎾 <b>Игра завершена!</b>\n\n"
-            f"{w1} и {w2} |{sum_win:.0f}| выиграли у {l1} и {l2} |{sum_lose:.0f}|\n"
+            f"{w1} и {w2} |{sum_win:.0f}| VS {l1} и {l2} |{sum_lose:.0f}|\n"
             f"{score_line}\n\n"
             f"{ratings_text}\n\n"
             f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
@@ -216,6 +359,114 @@ def format_game(data, doc_id):
             f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
         )
 
+def _format_tournament_rating_changes(data):
+    """Format rating changes for tournament participants."""
+    ts_changes = data.get("tsChanges", {})
+    rating_changes = data.get("ratingChanges", {})
+    ratings_before_map = data.get("ratingsBefore", {}) or {}
+    ratings_after_map = data.get("ratingsAfter", {}) or {}
+    
+    # Collect all player IDs from tournament
+    player_ids = set()
+    for pid in data.get("playerIds", []):
+        if pid:
+            player_ids.add(pid)
+    for slot in data.get("slots", []):
+        pid = slot.get("playerId")
+        if pid:
+            player_ids.add(pid)
+    for entry in data.get("leaderboard", []):
+        pid = entry.get("playerId")
+        if pid:
+            player_ids.add(pid)
+    for pair in data.get("pairLeaderboard", []):
+        for pid in pair.get("playerIds", []):
+            if pid:
+                player_ids.add(pid)
+    
+    if not player_ids:
+        return None
+    
+    changes = []
+    for pid in player_ids:
+        before_snap = ratings_before_map.get(pid)
+        after_snap = ratings_after_map.get(pid)
+        if before_snap is not None and before_snap.get("rating") is not None:
+            rating_before = before_snap["rating"]
+            if after_snap is not None and after_snap.get("rating") is not None:
+                rating_after = after_snap["rating"]
+            else:
+                rating_after = rating_before + rating_changes.get(pid, 0)
+            change = rating_after - rating_before
+        else:
+            ts = ts_changes.get(pid, {})
+            if ts:
+                mu = get_player_mu(pid)
+                sigma = get_player_sigma(pid)
+                mu_before = mu - ts.get("muDelta", 0)
+                sigma_before = sigma - ts.get("sigmaDelta", 0)
+                rating_before = _compute_rating(mu_before, sigma_before)
+                rating_after = get_player_rating(pid)
+                change = rating_after - rating_before
+            else:
+                # Legacy fallback
+                rating_before = get_player_rating(pid) - rating_changes.get(pid, 0)
+                rating_after = get_player_rating(pid)
+                change = rating_changes.get(pid, 0)
+        
+        changes.append({
+            'name': get_player_name(pid),
+            'before': rating_before,
+            'after': rating_after,
+            'change': change
+        })
+    
+    if not changes:
+        return None
+    
+    # Sort by absolute change (descending) — most significant first
+    changes.sort(key=lambda x: abs(x['change']), reverse=True)
+    
+    lines = []
+    for c in changes[:15]:  # Top 15 most significant
+        arrow = "📈" if c['change'] > 0 else "📉"
+        lines.append(f"{c['before']:.0f} {arrow} {c['after']:.0f} ({c['change']:+.0f}) — {c['name']}")
+    
+    return "\n".join(lines)
+
+def _get_player_rating_change_str(pid, data):
+    """Get rating change string for a single player, e.g. (+6) or (-3)."""
+    ts_changes = data.get("tsChanges", {})
+    rating_changes = data.get("ratingChanges", {})
+    ratings_before_map = data.get("ratingsBefore", {}) or {}
+    ratings_after_map = data.get("ratingsAfter", {}) or {}
+    
+    before_snap = ratings_before_map.get(pid)
+    after_snap = ratings_after_map.get(pid)
+    if before_snap is not None and before_snap.get("rating") is not None:
+        rating_before = before_snap["rating"]
+        if after_snap is not None and after_snap.get("rating") is not None:
+            rating_after = after_snap["rating"]
+        else:
+            rating_after = rating_before + rating_changes.get(pid, 0)
+        change = rating_after - rating_before
+    else:
+        ts = ts_changes.get(pid, {})
+        if ts:
+            mu = get_player_mu(pid)
+            sigma = get_player_sigma(pid)
+            mu_before = mu - ts.get("muDelta", 0)
+            sigma_before = sigma - ts.get("sigmaDelta", 0)
+            rating_before = _compute_rating(mu_before, sigma_before)
+            rating_after = get_player_rating(pid)
+            change = rating_after - rating_before
+        else:
+            change = rating_changes.get(pid, 0)
+    
+    if change == 0:
+        return ""
+    return f" ({change:+.0f})"
+
 def format_tournament(data, doc_id):
     name = data.get("name", "Без названия")
     date = data.get("date", "")
@@ -234,7 +485,11 @@ def format_tournament(data, doc_id):
             l = pair.get("losses", 0)
             gf = pair.get("gamesFor", 0)
             ga = pair.get("gamesAgainst", 0)
-            results_text += f"{medals[i]} <b>{pnames}</b> — Игры {w}-{l} | Очки {gf}-{ga}\n"
+            # Rating changes for each player in pair
+            rating_changes_str = ", ".join(
+                _get_player_rating_change_str(pid, data).strip() or "0" for pid in pids
+            )
+            results_text += f"{medals[i]} <b>{pnames}</b> — Игры {w}-{l} | Очки {gf}-{ga} | Рейтинг {rating_changes_str}\n"
         
         # Full table (top 10)
         lines = []
@@ -247,19 +502,28 @@ def format_tournament(data, doc_id):
             ga = pair.get("gamesAgainst", 0)
             diff = pair.get("gameDiff", 0)
             diff_str = f"+{diff}" if diff > 0 else str(diff)
-            lines.append(f"{idx+1}. {pnames} — Игры {w}-{l} | Очки {gf}-{ga} | Разница {diff_str}")
+            rating_changes_str = ", ".join(
+                _get_player_rating_change_str(pid, data).strip() or "0" for pid in pids
+            )
+            lines.append(f"{idx+1}. {pnames} — Игры {w}-{l} | Очки {gf}-{ga} | Разница {diff_str} | Рейтинг {rating_changes_str}")
         full_table = "\n".join(lines)
     else:
         leaderboard = data.get("leaderboard", [])
         for i, p in enumerate(leaderboard[:3]):
-            pname = get_player_name(p.get("playerId", "???"))
-            results_text += f"{medals[i]} <b>{pname}</b> — {p.get('points', 0)} очков\n"
+            pid = p.get("playerId", "???")
+            pname = get_player_name(pid)
+            points = p.get('points', 0)
+            change_str = _get_player_rating_change_str(pid, data)
+            results_text += f"{medals[i]} <b>{pname}</b> — {points} очков{change_str}\n"
         
         # Full table (top 10)
         lines = []
         for idx, p in enumerate(leaderboard[:10]):
-            pname = get_player_name(p.get("playerId", "???"))
-            lines.append(f"{idx+1}. {pname} — {p.get('points', 0)}")
+            pid = p.get("playerId", "???")
+            pname = get_player_name(pid)
+            points = p.get('points', 0)
+            change_str = _get_player_rating_change_str(pid, data)
+            lines.append(f"{idx+1}. {pname} — {points} очков{change_str}")
         full_table = "\n".join(lines)
     
     return (
@@ -351,6 +615,11 @@ def on_tournaments_snapshot(col_snapshot, changes, read_time):
                 continue
             data = change.document.to_dict()
             if data.get("status") == "finished":
+                # Skip publishing if organizer chose not to publish
+                if data.get("skipPublish") == True:
+                    print(f"[EVENT] Турнир завершён (без публикации): {doc_id}")
+                    new_ids.add(doc_id)  # Mark as sent so we don't check again
+                    continue
                 print(f"[EVENT] Турнир завершён: {doc_id}")
                 msg = format_tournament(data, doc_id)
                 send_to_all(msg)
@@ -492,7 +761,7 @@ class TrainingApplicationListener:
             resp = requests.post(
                 f"{TELEGRAM_API}/sendMessage",
                 json={
-                    "chat_id": CHAT_ID_PRO,
+                    "chat_id": ADMIN_CHAT_ID,
                     "text": text,
                     "parse_mode": "HTML",
                     "disable_web_page_preview": True,
@@ -500,7 +769,7 @@ class TrainingApplicationListener:
                 timeout=30,
             )
             resp.raise_for_status()
-            print(f"[EVENT] Заявка на тренировку {training_id} → {CHAT_ID_PRO}")
+            print(f"[EVENT] Заявка на тренировку {training_id} → ADMIN")
         except Exception as e:
             print(f"[ERROR] Не удалось отправить заявку {training_id}: {e}")
 
@@ -623,6 +892,104 @@ def format_ratings(players):
     
     return "\n".join(lines)
 
+# ========== ADMIN COMMANDS ==========
+SUPER_ADMIN_IDS = ["228493828"]  # Telegram ID супер-админа
+
+def handle_mode(chat_id, from_user, text):
+    """Переключение режима бота: /mode, /mode test, /mode work (только супер-админ)."""
+    user_id = str(from_user.get("id", ""))
+    if user_id not in SUPER_ADMIN_IDS:
+        send_telegram("❌ У вас нет прав для этой команды.", chat_id)
+        return
+    
+    parts = text.split()
+    if len(parts) == 1:
+        cur = get_bot_mode()
+        label = "🧪 тестирование (все уведомления вам в ЛС)" if cur == "test" else "✅ рабочий (уведомления в группы)"
+        send_telegram(
+            f"Текущий режим: <b>{label}</b>\n\n"
+            "/mode test — режим тестирования\n"
+            "/mode work — рабочий режим",
+            chat_id
+        )
+        return
+    
+    arg = parts[1].lower()
+    if arg in ("test", "тест"):
+        set_bot_mode("test")
+        send_telegram("🧪 Режим <b>тестирования</b> включён. Все уведомления будут приходить сюда, в ЛС.", chat_id)
+        print(f"[ADMIN] {user_id} переключил бота в тест-режим")
+    elif arg in ("work", "prod", "production", "рабочий"):
+        set_bot_mode("production")
+        send_telegram("✅ <b>Рабочий режим</b> включён. Уведомления уходят в группы.", chat_id)
+        print(f"[ADMIN] {user_id} вернул бота в рабочий режим")
+    else:
+        send_telegram("❌ Неизвестный режим. Используйте: /mode test или /mode work", chat_id)
+
+
+def handle_setpassword(chat_id, from_user, text):
+    """Установка пароля пользователю (только для супер-админа)"""
+    user_id = str(from_user.get("id", ""))
+    
+    if user_id not in SUPER_ADMIN_IDS:
+        send_telegram("❌ У вас нет прав для этой команды.", chat_id)
+        return
+    
+    # Формат: /setpassword email@domain.com новый_пароль
+    parts = text.split(maxsplit=2)
+    if len(parts) < 3:
+        send_telegram(
+            "❌ Неверный формат.\n\n"
+            "Использование:\n"
+            "/setpassword email@sberpadel.local новый_пароль",
+            chat_id
+        )
+        return
+    
+    auth_email = parts[1].strip().lower()
+    new_password = parts[2].strip()
+    
+    if len(new_password) < 6:
+        send_telegram("❌ Пароль должен быть не менее 6 символов.", chat_id)
+        return
+    
+    try:
+        db = init_firebase()
+        
+        # Находим пользователя в Firebase Auth
+        try:
+            user = auth.get_user_by_email(auth_email)
+        except Exception as e:
+            send_telegram(f"❌ Пользователь {auth_email} не найден в системе.", chat_id)
+            return
+        
+        # Устанавливаем новый пароль
+        auth.update_user(user.uid, password=new_password)
+        
+        # Отправляем уведомление пользователю (если есть recoveryEmail)
+        user_doc = db.collection("users").document(auth_email).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            recovery_email = user_data.get("recoveryEmail", "")
+            first_name = user_data.get("firstName", "")
+            if recovery_email:
+                # Можно отправить email, но пока просто уведомляем админа
+                pass
+        
+        send_telegram(
+            f"✅ Пароль успешно изменён!\n\n"
+            f"👤 Пользователь: {auth_email}\n"
+            f"🔑 Новый пароль: <code>{new_password}</code>\n\n"
+            f"Сообщите пароль пользователю.",
+            chat_id
+        )
+        print(f"[ADMIN] {user_id} установил пароль для {auth_email}")
+        
+    except Exception as e:
+        send_telegram(f"❌ Ошибка: {e}", chat_id)
+        print(f"[ERROR] setpassword: {e}")
+
+
 # ========== POLLING COMMANDS ==========
 def poll_commands():
     offset = 0
@@ -658,9 +1025,14 @@ def poll_commands():
                     send_telegram(
                         "👋 Привет! Бот Sber Padel Tour.\n\n"
                         "/trainings — список тренировок\n"
-                        "/rating — рейтинг игроков",
+                        "/rating — рейтинг игроков\n"
+                        "/mode — режим бота (тест/рабочий, только админ)",
                         chat_id
                     )
+                elif text == "/mode" or text.startswith("/mode "):
+                    handle_mode(chat_id, msg.get("from", {}), text)
+                elif text.startswith("/setpassword "):
+                    handle_setpassword(chat_id, msg.get("from", {}), text)
                     
         except requests.exceptions.ReadTimeout:
             continue
@@ -817,6 +1189,26 @@ if __name__ == "__main__":
     _watches.append(db.collection("padel_trainings").on_snapshot(booking_listener.on_snapshot))
     
     print("[OK] Все слушатели запущены")
+    
+    # Start heartbeat thread
+    import threading
+    def heartbeat_thread():
+        db_hb = init_firebase()
+        while _running:
+            try:
+                db_hb.collection("bot_status").document("status").set({
+                    "lastHeartbeat": firestore.SERVER_TIMESTAMP,
+                    "status": "running",
+                    "pid": os.getpid()
+                })
+                print("[HEARTBEAT] OK")
+            except Exception as e:
+                print(f"[HEARTBEAT] Error: {e}")
+            time.sleep(60)
+    
+    hb_thread = threading.Thread(target=heartbeat_thread, daemon=True)
+    hb_thread.start()
+    print("[OK] Heartbeat запущен")
     print("[OK] Polling команд запущен")
     
     # Run polling in main thread
