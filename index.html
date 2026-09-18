@@ -1997,6 +1997,16 @@ let authReady = false; // true after first onAuthStateChanged callback
 let players = [];
 let tournaments = [];
 let games = [];
+// Пагинация списка игр: живёт только первая страница (снапшот), остальное — get() по кнопке.
+// Счётчики (главная + таблица игроков) НЕ зависят от загруженных игр:
+//  - gamesPlayed на документе игрока (ведут Cloud Functions — источник правды)
+//  - статистика главной — агрегационные запросы count()
+const GAMES_PAGE_SIZE = 20;
+let gamesTotalCount = 0;      // всего документов padel_games (для кнопки «ещё»)
+let gamesFinishedStandalone = 0; // завершённые отдельные игры (для statMatches на главной)
+let gamesLoadedAll = false;   // догрузили ли до конца
+let gamesLoadingMore = false;
+let gamesFirstPageReady = false;
 let trainings = [];
 let plannedGames = [];
 let trainingLocations = [];
@@ -3062,16 +3072,11 @@ function renderPlayers() {
     return;
   }
 
-  // Count finished standalone games for each player dynamically
+  // Счётчик отдельных игр — с документа игрока: поле gamesPlayed ведут
+  // Cloud Functions (источник правды по коллекции игр). Не зависит
+  // от того, сколько страниц игр загружено на сайте.
   const gamesCount = {};
-  games.forEach(g => {
-    if (g.status === 'finished' && !g.tournamentId) {
-      const allPlayerIds = [...(g.pair1 || []), ...(g.pair2 || [])];
-      allPlayerIds.forEach(pid => {
-        gamesCount[pid] = (gamesCount[pid] || 0) + 1;
-      });
-    }
-  });
+  players.forEach(p => { gamesCount[p.id] = p.gamesPlayed || 0; });
 
   // Count finished tournament participations dynamically (fallback for data consistency)
   const tournamentCountFinished = {};
@@ -5178,27 +5183,78 @@ function renderAllUsers() {
 function updateStats() {
   document.getElementById('statPlayers').textContent = players.length;
   document.getElementById('statTournaments').textContent = tournaments.length;
+  // Только завершённые отдельные игры (не из турниров). Счётчик общий —
+  // считается агрегацией по коллекции, независимо от загруженных страниц.
+  document.getElementById('statMatches').textContent = gamesFinishedStandalone;
+}
 
-  let totalMatches = 0;
-  // Считаем только отдельные завершённые игры (не из турниров)
-  const finishedGames = games.filter(g => g.status === 'finished' && !g.tournamentId).length;
-  totalMatches = finishedGames;
-
-  document.getElementById('statMatches').textContent = totalMatches;
+// Общие счётчики игр: 2 агрегационных запроса вместо чтения всей коллекции.
+// Дёшево и точно; вызывается при старте и при изменениях первой страницы.
+async function refreshGameTotals() {
+  try {
+    const base = db.collection("padel_games");
+    const [totalSnap, finishedSnap] = await Promise.all([
+      base.count().get(),
+      base.where("status", "==", "finished").where("tournamentId", "==", null).count().get()
+    ]);
+    gamesTotalCount = totalSnap.data().count;
+    gamesFinishedStandalone = finishedSnap.data().count;
+    updateStats();
+    renderGamesLoadMore(); // пересчитать видимость кнопки «ещё»
+  } catch (e) {
+    console.error("refreshGameTotals error:", e);
+  }
 }
 
 // ============================================
 // GAMES
 // ============================================
 function subscribeToGames() {
-  db.collection("padel_games").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    games = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  // Первая страница — живой снапшот (новые игры появляются сами).
+  // Возвращает НЕ больше GAMES_PAGE_SIZE самых свежих игр.
+  db.collection("padel_games").orderBy("createdAt", "desc").limit(GAMES_PAGE_SIZE)
+    .onSnapshot(snapshot => {
+      const newest = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      // merge: заменяем первую страницу, старые догруженные страницы сохраняем
+      const firstIds = new Set(newest.map(g => g.id));
+      const older = games.filter(g => !firstIds.has(g.id));
+      games = [...newest, ...older];
+      gamesLoadedAll = newest.length < GAMES_PAGE_SIZE;
+      gamesFirstPageReady = true;
+      renderGames();
+      renderPlayers(); // счётчики игроков из p.gamesPlayed (Cloud Functions)
+      updateStats();
+      refreshGameTotals();
+    }, err => {
+      console.error("Games subscription error:", err);
+    });
+}
+
+// Догрузка следующей страницы игр по кнопке «Показать ещё».
+async function loadMoreGames() {
+  if (gamesLoadingMore || gamesLoadedAll || !games.length) return;
+  gamesLoadingMore = true;
+  renderGamesLoadMore();
+  try {
+    const last = games[games.length - 1];
+    const snap = await db.collection("padel_games")
+      .orderBy("createdAt", "desc")
+      .limit(GAMES_PAGE_SIZE)
+      .startAfter(last.createdAt)
+      .get();
+    const older = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const known = new Set(games.map(g => g.id));
+    const fresh = older.filter(g => !known.has(g.id));
+    games = [...games, ...fresh];
+    if (older.length < GAMES_PAGE_SIZE || fresh.length === 0) gamesLoadedAll = true;
     renderGames();
-    renderPlayers(); // обновить счётчик игр в таблице игроков
-    updateStats(); // обновить счётчик матчей на главной
-  }, err => {
-    console.error("Games subscription error:", err);
-  });
+  } catch (e) {
+    console.error("loadMoreGames error:", e);
+    showToast("Не удалось загрузить ещё игры", "error");
+  } finally {
+    gamesLoadingMore = false;
+    renderGamesLoadMore();
+  }
 }
 
 function subscribeToTrainings() {
@@ -5500,7 +5556,21 @@ function renderGames() {
     }
   });
 
+  html += '<div id="gamesLoadMoreWrap"></div>';
   container.innerHTML = html;
+  renderGamesLoadMore();
+}
+
+// Кнопка «Показать ещё» под списком игр. Отдельная функция — чтобы
+// обновлять подпись/состояние без перерисовки всего списка.
+function renderGamesLoadMore() {
+  const wrap = document.getElementById('gamesLoadMoreWrap');
+  if (!wrap) return;
+  if (!gamesFirstPageReady || gamesLoadedAll) { wrap.innerHTML = ''; return; }
+  const label = gamesLoadingMore
+    ? 'Загрузка…'
+    : `Показать ещё · загружено ${games.length} из ${gamesTotalCount}`;
+  wrap.innerHTML = `<button class="btn btn-secondary" style="width:100%;margin-top:12px;padding:10px;" onclick="loadMoreGames()" ${gamesLoadingMore ? 'disabled' : ''}>${label}</button>`;
 }
 
 function closeCreateTournamentModal() {
@@ -7025,6 +7095,11 @@ async function deleteGame(gameId) {
 
   try {
     await callCloudFn('deleteGame', { gameId });
+    // снапшот сам уберёт игру из первой страницы; если игра была старой
+    // (догруженной), убираем вручную + общие счётчики пересчитываем явно
+    games = games.filter(x => x.id !== gameId);
+    renderGames();
+    refreshGameTotals();
     showToast("Игра удалена", "success");
     await loadPlayers();
   } catch (e) {
