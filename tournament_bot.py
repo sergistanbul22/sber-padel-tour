@@ -229,11 +229,19 @@ def send_telegram(text, chat_id):
         return False
 
 def send_to_all(text):
+    """Рассылка в обе группы (турниры)."""
     if get_bot_mode() == "test":
         send_telegram(TEST_PREFIX + text, ADMIN_CHAT_ID)
         return
     for cid in ALL_CHAT_IDS:
         send_telegram(text, cid)
+
+def send_game_result(text):
+    """Результаты отдельно взятых игр — только в SBER-PADEL (без Sber Padel Pro)."""
+    if get_bot_mode() == "test":
+        send_telegram(TEST_PREFIX + text, ADMIN_CHAT_ID)
+        return
+    send_telegram(text, CHAT_ID_SBER_PADEL)
 
 # ========== FORMAT MESSAGES ==========
 def format_game(data, doc_id):
@@ -340,7 +348,8 @@ def format_game(data, doc_id):
             f"{w1} и {w2} |{sum_win:.0f}| VS {l1} и {l2} |{sum_lose:.0f}|\n"
             f"{score_line}\n\n"
             f"{ratings_text}\n\n"
-            f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
+            f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>\n"
+            f"🔎 <a href='https://t.me/padelradarru_bot'>Найти свободный корт</a>"
         )
     else:
         # Old format fallback
@@ -356,7 +365,8 @@ def format_game(data, doc_id):
         return (
             f"🎾 <b>Игра завершена!</b>\n\n"
             f"{t1}  <b>{s1}:{s2}</b>  {t2}\n\n"
-            f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
+            f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>\n"
+            f"🔎 <a href='https://t.me/padelradarru_bot'>Найти свободный корт</a>"
         )
 
 def _format_tournament_rating_changes(data):
@@ -535,7 +545,8 @@ def format_tournament(data, doc_id):
         f"{results_text}\n"
         f"<b>Полная таблица:</b>\n"
         f"<pre>{full_table}</pre>\n\n"
-        f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
+        f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>\n"
+        f"🔎 <a href='https://t.me/padelradarru_bot'>Найти свободный корт</a>"
     )
 
 def format_training(data, doc_id):
@@ -561,7 +572,8 @@ def format_training(data, doc_id):
         f"💪 <b>Новая тренировка!</b>\n\n"
         f"{info}\n\n"
         f"👉 Запишись по ссылке:\n"
-        f"<a href='https://sber-padel-tour.ru/?training={doc_id}'>https://sber-padel-tour.ru/?training={doc_id}</a>"
+        f"<a href='https://sber-padel-tour.ru/?training={doc_id}'>https://sber-padel-tour.ru/?training={doc_id}</a>\n"
+        f"🔎 <a href='https://t.me/padelradarru_bot'>Найти свободный корт</a>"
     )
 
 def format_new_user(data, doc_id):
@@ -572,7 +584,8 @@ def format_new_user(data, doc_id):
     return (
         f"✅ Новая регистрация на Sber Padel Tour!\n\n"
         f"👤 {name}\n\n"
-        f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>"
+        f"👉 <a href='https://sber-padel-tour.ru/'>Перейти на сайт</a>\n"
+        f"🔎 <a href='https://t.me/padelradarru_bot'>Найти свободный корт</a>"
     )
 
 # ========== FIRESTORE LISTENERS ==========
@@ -589,7 +602,7 @@ def on_games_snapshot(col_snapshot, changes, read_time):
             if data.get("status") == "finished":
                 print(f"[EVENT] Игра завершена: {doc_id}")
                 msg = format_game(data, doc_id)
-                send_to_all(msg)
+                send_game_result(msg)
                 new_ids.add(doc_id)
         elif change.type.name == "ADDED":
             doc_id = change.document.id
@@ -597,7 +610,7 @@ def on_games_snapshot(col_snapshot, changes, read_time):
             if data.get("status") == "finished" and doc_id not in sent_ids:
                 print(f"[EVENT] Игра завершена (add): {doc_id}")
                 msg = format_game(data, doc_id)
-                send_to_all(msg)
+                send_game_result(msg)
                 new_ids.add(doc_id)
     
     if new_ids:
