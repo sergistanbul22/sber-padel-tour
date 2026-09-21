@@ -2006,6 +2006,7 @@ const WHIST_SCHEDULES = {
 let app, auth, db;
 let currentUser = null;
 let currentUserData = null; // cached Firestore user data
+let editingTrainingId = null; // режим редактирования тренировки в createTrainingModal
 let userRole = 'player'; // 'player' | 'admin' | 'superadmin'
 let isAdmin = false;
 let isSuperAdmin = false;
@@ -7123,6 +7124,10 @@ async function openCreateTrainingModal() {
     showToast("Только администратор может создавать тренировки", "error");
     return;
   }
+  editingTrainingId = null;
+  document.getElementById('createTrainingModalTitle').textContent = '💪 Создать тренировку';
+  document.getElementById('createTrainingSubmitBtn').textContent = '💪 Создать тренировку';
+  document.getElementById('trainingComment').value = '';
   document.getElementById('trainingDate').value = new Date().toISOString().split('T')[0];
   document.getElementById('trainingTimeStart').value = '';
   document.getElementById('trainingTimeEnd').value = '';
@@ -7145,6 +7150,10 @@ async function copyTraining(trainingId) {
     showToast("Только администратор может копировать тренировки", "error");
     return;
   }
+  editingTrainingId = null;
+  document.getElementById('createTrainingModalTitle').textContent = '💪 Создать тренировку';
+  document.getElementById('createTrainingSubmitBtn').textContent = '💪 Создать тренировку';
+  document.getElementById('trainingComment').value = '';
   const t = trainings.find(x => x.id === trainingId);
   if (!t) return;
 
@@ -7173,7 +7182,54 @@ async function copyTraining(trainingId) {
 }
 
 function closeCreateTrainingModal() {
+  editingTrainingId = null;
   document.getElementById('createTrainingModal').classList.remove('show');
+}
+
+async function openEditTraining(trainingId) {
+  const t = trainings.find(x => x.id === trainingId);
+  if (!t) return;
+  const userEmail = (currentUser?.email || '').toLowerCase();
+  if (!isAdmin && t.createdBy !== userEmail) {
+    showToast("Только администратор или организатор могут редактировать тренировку", "error");
+    return;
+  }
+  editingTrainingId = trainingId;
+  document.getElementById('trainingDate').value = t.date || '';
+  document.getElementById('trainingTimeStart').value = t.timeStart || '';
+  document.getElementById('trainingTimeEnd').value = t.timeEnd || '';
+  document.getElementById('trainingSlotsCount').value = String(t.totalSlots || 4);
+  document.getElementById('trainingComment').value = t.comment || '';
+  document.getElementById('addLocationWrap').style.display = 'none';
+  document.getElementById('addCoachWrap').style.display = 'none';
+  document.getElementById('addGroupWrap').style.display = 'none';
+  renderTrainingSlotInputs();
+  await ensureTrainingMetaLoaded();
+  populateTrainingSelects();
+  document.getElementById('trainingLocation').value = t.location || '';
+  document.getElementById('trainingCoach').value = t.coach || '';
+  const groupSelect = document.getElementById('trainingGroup');
+  if (groupSelect) groupSelect.value = t.group || '';
+  const typeSelect = document.getElementById('trainingType');
+  if (typeSelect) typeSelect.value = t.trainingType || 'open';
+  // Предзаполняем слоты текущими игроками; записи, привязанные к email
+  // (не id игрока), добавляем временной опцией, чтобы не потерять при сохранении
+  if (t.slots) {
+    t.slots.forEach((slot, i) => {
+      const sel = document.getElementById(`trainingSlot_${i}`);
+      if (!sel) return;
+      if (slot.playerId) {
+        const player = players.find(p => p.id === slot.playerId);
+        if (!player) {
+          sel.insertAdjacentHTML('beforeend', `<option value="${slot.playerId}">${escapeHtml(slot.playerName || 'Неизвестный')}</option>`);
+        }
+        sel.value = slot.playerId;
+      }
+    });
+  }
+  document.getElementById('createTrainingModalTitle').textContent = '✏️ Изменить тренировку';
+  document.getElementById('createTrainingSubmitBtn').textContent = '💾 Сохранить изменения';
+  document.getElementById('createTrainingModal').classList.add('show');
 }
 
 function showAddLocationInput() {
@@ -7306,9 +7362,19 @@ function renderTrainingSlotInputs() {
 
 async function createTraining() {
   if (locks.createTraining) return;
-  if (!isAdmin) {
+  const editingId = editingTrainingId;
+  if (!isAdmin && !editingId) {
     showToast("Только администратор может создавать тренировки", "error");
     return;
+  }
+  if (editingId) {
+    const t0 = trainings.find(x => x.id === editingId);
+    const userEmail = (currentUser?.email || '').toLowerCase();
+    if (!t0 || (!isAdmin && t0.createdBy !== userEmail)) {
+      showToast("Только администратор или организатор могут редактировать тренировку", "error");
+      editingTrainingId = null;
+      return;
+    }
   }
   locks.createTraining = true;
 
@@ -7320,9 +7386,10 @@ async function createTraining() {
   const group = document.getElementById('trainingGroup') ? document.getElementById('trainingGroup').value : '';
   const trainingType = document.getElementById('trainingType') ? document.getElementById('trainingType').value : 'open';
   const totalSlots = parseInt(document.getElementById('trainingSlotsCount').value) || 4;
+  const comment = document.getElementById('trainingComment').value.trim();
 
-  if (!date) { showToast("Выберите дату", "error"); return; }
-  if (!location) { showToast("Выберите локацию", "error"); return; }
+  if (!date) { showToast("Выберите дату", "error"); locks.createTraining = false; return; }
+  if (!location) { showToast("Выберите локацию", "error"); locks.createTraining = false; return; }
 
   const slots = [];
   for (let i = 0; i < totalSlots; i++) {
@@ -7330,29 +7397,47 @@ async function createTraining() {
     const playerId = select ? select.value : '';
     if (playerId) {
       const player = players.find(p => p.id === playerId);
-      slots.push({ playerId, playerName: player ? player.name : '', bookedAt: new Date().toISOString() });
+      slots.push({ playerId, playerName: player ? player.name : (select.options[select.selectedIndex] ? select.options[select.selectedIndex].text : ''), bookedAt: new Date().toISOString() });
     } else {
       slots.push({ playerId: null, playerName: null, bookedAt: null });
     }
   }
 
   try {
-    await db.collection("padel_trainings").add({
-      date,
-      timeStart,
-      timeEnd,
-      location,
-      coach: coach || null,
-      group: group || null,
-      trainingType: trainingType,
-      totalSlots,
-      slots,
-      applications: [],
-      createdBy: (currentUser.email || '').toLowerCase(),
-      createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    showToast("Тренировка создана", "success");
+    if (editingId) {
+      await db.collection("padel_trainings").doc(editingId).update({
+        date,
+        timeStart,
+        timeEnd,
+        location,
+        coach: coach || null,
+        group: group || null,
+        trainingType: trainingType,
+        totalSlots,
+        slots,
+        comment: comment || null
+      });
+      showToast("Тренировка обновлена", "success");
+    } else {
+      await db.collection("padel_trainings").add({
+        date,
+        timeStart,
+        timeEnd,
+        location,
+        coach: coach || null,
+        group: group || null,
+        trainingType: trainingType,
+        totalSlots,
+        slots,
+        comment: comment || null,
+        applications: [],
+        createdBy: (currentUser.email || '').toLowerCase(),
+        createdByName: getCurrentUserFullName() || (currentUser.email || '').toLowerCase(),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      showToast("Тренировка создана", "success");
+    }
+    editingTrainingId = null;
     closeCreateTrainingModal();
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
@@ -7426,6 +7511,7 @@ function renderTrainings() {
             <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
               📍 ${escapeHtml(t.location)}${t.coach ? ' | 🎾 ' + escapeHtml(t.coach) : ''}${t.group ? ' | 👥 ' + escapeHtml(t.group) : ''}
               ${t.createdByName ? '<br>👤 Организатор: ' + escapeHtml(t.createdByName) : ''}
+              ${t.comment ? '<br>💬 ' + escapeHtml(t.comment) : ''}
             </div>
             <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;">
               <span style="color: ${isFull ? 'var(--danger)' : 'var(--accent)'};">
@@ -7595,12 +7681,17 @@ function openTraining(trainingId) {
         <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Организатор</div>
         <div style="font-size: 16px; font-weight: 600;">👤 ${escapeHtml(t.createdByName)}</div>
       </div>` : ''}
+      ${t.comment ? `<div style="margin-bottom: 16px;">
+        <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">Комментарий</div>
+        <div style="font-size: 16px; font-weight: 600; color: var(--accent);">💬 ${escapeHtml(t.comment)}</div>
+      </div>` : ''}
       ${isClosed ? applicationsHtml : ''}
       <div style="margin-bottom: 16px;">
         <div style="font-size: 14px; color: var(--text-muted); margin-bottom: 8px;">Места (${bookedCount}/${t.totalSlots})</div>
         ${slotsHtml}
       </div>
       ${actionBtn}
+      ${(isOrganizerOrAdmin && !isPast) ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openEditTraining('${trainingId}')">✏️ Изменить</button>` : ''}
     </div>
   `;
 
@@ -8421,7 +8512,7 @@ init();
 <div class="modal-overlay" id="createTrainingModal" onclick="if(event.target===this)closeCreateTrainingModal()">
   <div class="modal" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
     <div class="modal-header">
-      <span class="modal-title">💪 Создать тренировку</span>
+      <span class="modal-title" id="createTrainingModalTitle">💪 Создать тренировку</span>
       <button class="btn btn-secondary btn-sm" onclick="closeCreateTrainingModal()">✕</button>
     </div>
     <div style="padding: 20px;">
@@ -8616,6 +8707,12 @@ init();
       </div>
 
       <div class="form-group">
+        <label class="form-label">Комментарий (опционально)</label>
+        <input type="text" class="form-input" id="trainingComment" placeholder="Например: уровень 500+" maxlength="50">
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Макс. 50 символов</div>
+      </div>
+
+      <div class="form-group">
         <label class="form-label">Тип тренировки <span style="color:var(--danger)">*</span></label>
         <select class="form-select" id="trainingType">
           <option value="open" selected>🔓 Открытая (запись свободная)</option>
@@ -8639,7 +8736,7 @@ init();
         <div id="trainingSlotInputs" style="display: grid; gap: 8px;"></div>
       </div>
 
-      <button class="btn btn-primary" onclick="createTraining()" style="width: 100%; margin-top: 16px;">
+      <button class="btn btn-primary" id="createTrainingSubmitBtn" onclick="createTraining()" style="width: 100%; margin-top: 16px;">
         💪 Создать тренировку
       </button>
     </div>
