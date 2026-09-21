@@ -7,7 +7,7 @@ set -e
 HTML_FILE="/root/.openclaw/workspace/index.html"
 LOG_TAG="[CF-URL-UPDATE]"
 TUNNEL_SERVICE="cloudflared-reset.service"
-TELEGRAM_BOT_TOKEN="8763865911:AAG2xHWXlYuT54ElXy1PgtQ8HuZQnjXdlIg"
+TELEGRAM_BOT_TOKEN="8763865911:AAF9NsWJsV-ppuorU-HDGRnyQPzjJFDntFs"
 TELEGRAM_CHAT_ID="228493828"
 
 log() {

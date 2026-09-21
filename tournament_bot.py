@@ -57,7 +57,7 @@ else:
     print("[INFO] Запуск с --force, пропускаем проверку на дубли.")
 
 # ========== НАСТРОЙКИ ==========
-TELEGRAM_BOT_TOKEN = "8763865911:AAG2xHWXlYuT54ElXy1PgtQ8HuZQnjXdlIg"
+TELEGRAM_BOT_TOKEN = "8763865911:AAF9NsWJsV-ppuorU-HDGRnyQPzjJFDntFs"
 CHAT_ID_SBER_PADEL = "-1002556296907"
 CHAT_ID_PRO = "-4794823132"
 ADMIN_CHAT_ID = "228493828"  # Личные сообщения администратору
