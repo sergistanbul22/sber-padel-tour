@@ -22,19 +22,32 @@ def check_single_instance():
     """Проверяет, что бот запущен только в одном экземпляре"""
     if _skip_single_instance:
         return
-    import subprocess
-    import time
     time.sleep(1)
-    script_name = os.path.basename(__file__)
-    result = subprocess.run(
-        ['pgrep', '-f', f'bot_venv/bin/python3 {script_name}'],
-        capture_output=True, text=True
-    )
-    pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
-    current_pid = str(os.getpid())
-    other_pids = [p for p in pids if p != current_pid]
+    current_pid = os.getpid()
+    parent_pid = os.getppid()
+    other_pids = []
+    for pid_str in os.listdir('/proc'):
+        if not pid_str.isdigit():
+            continue
+        pid = int(pid_str)
+        if pid in (current_pid, parent_pid):
+            continue
+        try:
+            with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                cmdline = f.read().decode('utf-8', 'ignore').replace('\x00', ' ')
+        except Exception:
+            continue
+        # Только реальный интерпретатор python с этим скриптом
+        # (исключаем bash-обёртки, py_compile и т.п.)
+        if 'tournament_bot.py' not in cmdline:
+            continue
+        if '-m py_compile' in cmdline or 'pgrep' in cmdline:
+            continue
+        exe = os.path.basename(os.readlink(f'/proc/{pid}/exe')) if os.path.exists(f'/proc/{pid}/exe') else ''
+        if exe.startswith('python'):
+            other_pids.append(pid)
     if other_pids:
-        print(f"[ERROR] Бот уже запущен (PID: {', '.join(other_pids)}). Завершение.")
+        print(f"[ERROR] Бот уже запущен (PID: {', '.join(map(str, other_pids))}). Завершение.")
         sys.exit(1)
 
 if '--force' not in sys.argv:
@@ -203,6 +216,86 @@ def get_bot_mode():
             return m if m in ("production", "test") else "production"
     except Exception:
         return "production"
+
+
+# ========== TELEGRAM LINKS (username → chat_id) ==========
+# Telegram API не умеет искать chat_id по username, поэтому бот сам строит
+# маппинг из входящих сообщений и хранит его в Firestore (коллекция telegram_links).
+# Admin SDK обходит rules; доступ сайта к коллекции не нужен.
+_tg_links_cache = None
+
+def load_tg_links(db):
+    global _tg_links_cache
+    if _tg_links_cache is None:
+        _tg_links_cache = {}
+        try:
+            for doc in db.collection("telegram_links").stream():
+                chat_id = doc.to_dict().get("chat_id")
+                if chat_id:
+                    _tg_links_cache[doc.id] = str(chat_id)
+            print(f"[INFO] telegram_links загружено: {len(_tg_links_cache)}")
+        except Exception as e:
+            print(f"[WARN] telegram_links load: {e}")
+    return _tg_links_cache
+
+def remember_tg_user(db, username, chat_id):
+    """Запоминает соответствие @username → chat_id (кэш + Firestore)."""
+    if not username or not chat_id:
+        return
+    key = str(username).strip().lower()
+    if not key:
+        return
+    links = load_tg_links(db)
+    if str(links.get(key, "")) == str(chat_id):
+        return
+    links[key] = str(chat_id)
+    try:
+        db.collection("telegram_links").document(key).set({
+            "chat_id": str(chat_id),
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        })
+    except Exception as e:
+        print(f"[WARN] telegram_links write ({key}): {e}")
+
+def resolve_organizer_chat_id(db, training_data):
+    """chat_id организатора тренировки: createdBy → users.telegram → telegram_links."""
+    email = (training_data.get("createdBy") or "").strip().lower()
+    if not email:
+        return None
+    try:
+        user_doc = db.collection("users").document(email).get()
+        if not user_doc.exists:
+            return None
+        tg = (user_doc.to_dict().get("telegram") or "").strip().lower()
+        if not tg:
+            return None
+        return load_tg_links(db).get(tg)
+    except Exception as e:
+        print(f"[WARN] resolve organizer ({email}): {e}")
+        return None
+
+def notify_training_organizer(data, text, event_tag):
+    """Дублирует уведомление о тренировке организатору в ЛС (если chat_id известен).
+
+    Не дублирует, если организатор и так получает уведомление (админ/группа).
+    В тестовом режиме бота копия уходит админу с пометкой.
+    """
+    try:
+        db = init_firebase()
+        org_chat = resolve_organizer_chat_id(db, data)
+        if not org_chat:
+            print(f"[EVENT] {event_tag}: у организатора нет telegram/chat_id — ЛС пропущено")
+            return
+        org_chat = str(org_chat)
+        if org_chat in (str(ADMIN_CHAT_ID), str(TRAINING_BOOKING_CHAT_ID)):
+            return
+        if get_bot_mode() == "test":
+            send_telegram(f"🧪 [test → организатору {org_chat}]\n\n{text}", ADMIN_CHAT_ID)
+        else:
+            send_telegram(text, org_chat)
+        print(f"[EVENT] {event_tag} → организатор {org_chat}")
+    except Exception as e:
+        print(f"[WARN] notify organizer ({event_tag}): {e}")
 
 
 def set_bot_mode(mode):
@@ -786,6 +879,8 @@ class TrainingApplicationListener:
         except Exception as e:
             print(f"[ERROR] Не удалось отправить заявку {training_id}: {e}")
 
+        notify_training_organizer(data, text, f"заявка {training_id}")
+
 
 # ========== TRAINING BOOKINGS (open trainings) ==========
 class TrainingBookingListener:
@@ -871,6 +966,8 @@ class TrainingBookingListener:
             print(f"[EVENT] Запись на тренировку {training_id} → {TRAINING_BOOKING_CHAT_ID}")
         except Exception as e:
             print(f"[ERROR] Не удалось отправить уведомление о записи {training_id}: {e}")
+
+        notify_training_organizer(data, text, f"запись {training_id}")
 
 
 # ========== RATINGS COMMAND ==========
@@ -1025,6 +1122,15 @@ def poll_commands():
                 msg = update.get("message", {})
                 text = msg.get("text", "")
                 chat_id = msg.get("chat", {}).get("id", "")
+                from_user = msg.get("from", {})
+
+                # Запоминаем @username → chat_id для уведомлений организаторам тренировок
+                if from_user.get("username") and chat_id:
+                    try:
+                        remember_tg_user(init_firebase(), from_user.get("username"), chat_id)
+                    except Exception as e:
+                        print(f"[WARN] telegram_links upsert: {e}")
+                
                 
                 if text == "/trainings":
                     send_trainings_list(chat_id)
@@ -1039,7 +1145,9 @@ def poll_commands():
                         "👋 Привет! Бот Sber Padel Tour.\n\n"
                         "/trainings — список тренировок\n"
                         "/rating — рейтинг игроков\n"
-                        "/mode — режим бота (тест/рабочий, только админ)",
+                        "/mode — режим бота (тест/рабочий, только админ)\n\n"
+                        "ℹ️ Организаторы тренировок получают уведомления о новых записях в ЛС, "
+                        "если в профиле на сайте указан @username и вы хоть раз написали боту.",
                         chat_id
                     )
                 elif text == "/mode" or text.startswith("/mode "):
