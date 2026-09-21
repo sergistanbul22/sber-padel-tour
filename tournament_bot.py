@@ -287,6 +287,9 @@ def notify_training_organizer(data, text, event_tag):
             print(f"[EVENT] {event_tag}: у организатора нет telegram/chat_id — ЛС пропущено")
             return
         org_chat = str(org_chat)
+        if org_chat.startswith('-'):
+            print(f"[WARN] {event_tag}: chat_id организатора {org_chat} — групповой (битый маппинг), ЛС пропущено")
+            return
         if org_chat in (str(ADMIN_CHAT_ID), str(TRAINING_BOOKING_CHAT_ID)):
             return
         if get_bot_mode() == "test":
@@ -1124,8 +1127,10 @@ def poll_commands():
                 chat_id = msg.get("chat", {}).get("id", "")
                 from_user = msg.get("from", {})
 
-                # Запоминаем @username → chat_id для уведомлений организаторам тренировок
-                if from_user.get("username") and chat_id:
+                # Запоминаем @username → chat_id для уведомлений организаторам тренировок.
+                # ТОЛЬКО личные чаты: сообщения из групп не дают персонального chat_id.
+                chat_type = msg.get("chat", {}).get("type", "")
+                if from_user.get("username") and chat_id and chat_type == "private":
                     try:
                         remember_tg_user(init_firebase(), from_user.get("username"), chat_id)
                     except Exception as e:
