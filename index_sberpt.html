@@ -3310,6 +3310,7 @@ function openTournament(id) {
   if (!t) return;
 
   document.getElementById('modalTitle').textContent = t.name;
+  document.querySelector('#tournamentModal .modal').style.maxWidth = '700px';
   const modal = document.getElementById('tournamentModal');
   const content = document.getElementById('modalContent');
 
@@ -5903,6 +5904,7 @@ function openPlannedGame(plannedGameId) {
   const modalEl = document.getElementById('tournamentModal');
   if (!modalEl) return;
   document.getElementById('modalTitle').textContent = '📋 Запланированная игра';
+  document.querySelector('#tournamentModal .modal').style.maxWidth = '700px';
   document.getElementById('modalContent').innerHTML = modalContent;
   modalEl.classList.add('open');
 }
@@ -7702,6 +7704,7 @@ function openTraining(trainingId) {
     return;
   }
   document.getElementById('modalTitle').textContent = '';
+  document.querySelector('#tournamentModal .modal').style.maxWidth = '500px';
   document.getElementById('modalContent').innerHTML = content;
   modalEl.classList.add('open');
   console.log('[DEEP-LINK] Modal opened successfully');
