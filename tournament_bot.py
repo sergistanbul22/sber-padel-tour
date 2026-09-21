@@ -232,7 +232,7 @@ def load_tg_links(db):
             for doc in db.collection("telegram_links").stream():
                 chat_id = doc.to_dict().get("chat_id")
                 if chat_id:
-                    _tg_links_cache[doc.id] = str(chat_id)
+                    _tg_links_cache[doc.id.strip().lower().lstrip('@')] = str(chat_id)
             print(f"[INFO] telegram_links загружено: {len(_tg_links_cache)}")
         except Exception as e:
             print(f"[WARN] telegram_links load: {e}")
@@ -266,7 +266,7 @@ def resolve_organizer_chat_id(db, training_data):
         user_doc = db.collection("users").document(email).get()
         if not user_doc.exists:
             return None
-        tg = (user_doc.to_dict().get("telegram") or "").strip().lower()
+        tg = (user_doc.to_dict().get("telegram") or "").strip().lower().lstrip("@")
         if not tg:
             return None
         return load_tg_links(db).get(tg)
