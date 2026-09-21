@@ -815,6 +815,14 @@
     margin-bottom: 24px;
   }
 
+  .modal-header:has(.modal-title:empty) {
+    margin-bottom: 0;
+    height: 0;
+    overflow: visible;
+    position: relative;
+    z-index: 2;
+  }
+
   .modal-title {
     font-size: 22px;
     font-weight: 700;
@@ -7602,7 +7610,7 @@ function openTraining(trainingId) {
     console.error('[DEEP-LINK] tournamentModal not found in DOM!');
     return;
   }
-  document.getElementById('modalTitle').textContent = '💪 Тренировка';
+  document.getElementById('modalTitle').textContent = '';
   document.getElementById('modalContent').innerHTML = content;
   modalEl.classList.add('open');
   console.log('[DEEP-LINK] Modal opened successfully');
