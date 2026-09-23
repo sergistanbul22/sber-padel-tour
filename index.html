@@ -1227,6 +1227,40 @@
     margin-bottom: 24px;
   }
 
+  /* Поиск игрока в таблице «Общий зачет» */
+  .player-search { position: relative; margin-bottom: 16px; }
+  .player-search-input { width: 100%; font-size: 16px; } /* 16px — чтобы iOS не зумил при фокусе */
+  .player-search-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 60;
+    display: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-height: 264px;
+    overflow-y: auto;
+    box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  }
+  .player-search-results.show { display: block; }
+  .player-search-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .player-search-item:last-child { border-bottom: none; }
+  .player-search-item:hover { background: var(--bg-hover); }
+  .player-search-item .ps-rating { color: var(--accent); font-weight: 700; white-space: nowrap; }
+  .player-search-empty { padding: 10px 14px; color: var(--text-muted); font-size: 13px; }
+  .data-table tr.player-row-highlight td { background: var(--bg-hover); }
+
   /* Scrollbar */
   ::-webkit-scrollbar {
     width: 8px;
@@ -1501,6 +1535,10 @@
         <span>Рейтинг:</span>
         <span class="rating-value">SberTS</span>
       </div>
+    </div>
+    <div class="player-search">
+      <input type="text" id="playerSearchInput" class="form-input player-search-input" placeholder="🔍 Поиск игрока — первые буквы имени или фамилии" autocomplete="off">
+      <div class="player-search-results" id="playerSearchResults"></div>
     </div>
     <div id="playersList">
       <div class="empty-state">
@@ -3154,7 +3192,7 @@ function renderPlayers() {
     const ratingVal = hasGames ? formatRating(p.rating) : '—';
     const isNewbie = totalGames <= 5 && hasGames;
 
-    html += `<tr>
+    html += `<tr data-player-id="${p.id}">
       <td><span class="player-rank ${rankClass}">${idx + 1}</span></td>
       <td><span class="player-name">${escapeHtml(p.name)}</span>${isNewbie ? ' <span style="font-size:11px;color:var(--success);">[новичок]</span>' : ''}</td>
       <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${typeof p.rating === 'number' ? p.rating : 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
@@ -3167,6 +3205,65 @@ function renderPlayers() {
 
   html += '</tbody></table></div>';
   container.innerHTML = html;
+}
+
+// ========== ПОИСК ИГРОКА В ТАБЛИЦЕ «ОБЩИЙ ЗАЧЕТ» ==========
+const playerSearchInput = document.getElementById('playerSearchInput');
+const playerSearchResults = document.getElementById('playerSearchResults');
+let playerSearchHighlightTimer = null;
+
+function hidePlayerSearchResults() {
+  playerSearchResults.classList.remove('show');
+  playerSearchResults.innerHTML = '';
+}
+
+function renderPlayerSearchResults(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) { hidePlayerSearchResults(); return; }
+
+  const matches = players
+    .filter(p => (p.name || '').toLowerCase().includes(q))
+    .sort((a, b) => (typeof b.rating === 'number' ? b.rating : 100) - (typeof a.rating === 'number' ? a.rating : 100))
+    .slice(0, 12);
+
+  if (matches.length === 0) {
+    playerSearchResults.innerHTML = '<div class="player-search-empty">Никого не нашлось</div>';
+  } else {
+    playerSearchResults.innerHTML = matches.map(p => {
+      const ratingVal = typeof p.rating === 'number' ? formatRating(p.rating) : '—';
+      return `<div class="player-search-item" data-player-id="${p.id}"><span>${escapeHtml(p.name)}</span><span class="ps-rating">${ratingVal}</span></div>`;
+    }).join('');
+  }
+  playerSearchResults.classList.add('show');
+}
+
+function scrollToPlayerRow(playerId) {
+  const row = document.querySelector(`#playersTable tr[data-player-id="${CSS.escape(playerId)}"]`);
+  if (!row) {
+    showToast('Игрок не найден в таблице', 'error');
+    return;
+  }
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('player-row-highlight');
+  clearTimeout(playerSearchHighlightTimer);
+  playerSearchHighlightTimer = setTimeout(() => row.classList.remove('player-row-highlight'), 2600);
+}
+
+if (playerSearchInput) {
+  playerSearchInput.addEventListener('input', (e) => renderPlayerSearchResults(e.target.value));
+  playerSearchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { playerSearchInput.value = ''; hidePlayerSearchResults(); }
+  });
+  playerSearchResults.addEventListener('click', (e) => {
+    const item = e.target.closest('.player-search-item');
+    if (!item) return;
+    scrollToPlayerRow(item.getAttribute('data-player-id'));
+    playerSearchInput.value = '';
+    hidePlayerSearchResults();
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.player-search')) hidePlayerSearchResults();
+  });
 }
 
 async function addNewPlayer() {
