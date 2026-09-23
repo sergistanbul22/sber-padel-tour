@@ -1168,8 +1168,6 @@
       font-size: 10px;
       padding: 6px 6px;
     }
-      white-space: nowrap;
-    }
 
     .stats-grid {
       grid-template-columns: repeat(3, 1fr);
@@ -1191,6 +1189,10 @@
   }
 
   @media (max-width: 480px) {
+    /* Пара кнопок «Создать/Запланировать игру» — компактный вид на iPhone */
+    .games-actions { gap: 6px; }
+    .games-actions .btn { padding: 8px 10px; font-size: 13px; }
+
     #playersTable th:nth-child(4),
     #playersTable th:nth-child(5),
     #playersTable th:nth-child(6),
@@ -1214,6 +1216,15 @@
       font-size: 12px;
       white-space: nowrap;
     }
+  }
+
+  /* Пара кнопок в шапке раздела «Игры»: две в одну строку, на узком экране — аккуратный перенос */
+  .games-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 24px;
   }
 
   /* Scrollbar */
@@ -1546,9 +1557,9 @@
   <h2 class="section-title">Игры</h2>
   <p class="section-subtitle">Отдельные игры SBER PADEL TOUR</p>
 
-  <div style="text-align: center; margin-bottom: 24px;" id="createGameBtnContainer">
+  <div class="games-actions" id="createGameBtnContainer">
     <button class="btn btn-primary" onclick="openCreateGameModal()">➕ Создать игру</button>
-    <button class="btn btn-secondary" style="margin-left: 8px;" onclick="openPlanGameModal()">📋 Запланировать игру</button>
+    <button class="btn btn-secondary" onclick="openPlanGameModal()">📋 Запланировать игру</button>
   </div>
 
   <div id="gamesList">
@@ -5451,7 +5462,7 @@ function renderGames() {
 
   // Кнопка создания видна всем зарегистрированным пользователям
   if (btnContainer) {
-    btnContainer.style.display = currentUser ? 'block' : 'none';
+    btnContainer.style.display = currentUser ? 'flex' : 'none';
   }
 
   // Combine regular games and planned games
