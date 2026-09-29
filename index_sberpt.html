@@ -1645,7 +1645,7 @@
   <!-- Памятка для супер-админа -->
   <div id="admin-cheat-sheet" style="display:none; margin-bottom: 16px; padding: 12px 16px; background: var(--accent-light); border-radius: 8px; border-left: 4px solid var(--accent); font-size: 13px; line-height: 1.6;">
     <div style="font-weight: 700; color: var(--accent); margin-bottom: 6px;">🛠 Памятка администратора</div>
-    <div><b>Сброс пароля пользователя:</b> отправьте боту команду <code>/setpassword email@sberpadel.local НовыйПароль</code></div>
+    <div><b>Сброс пароля пользователя:</b> отправьте боту команду <code>/setpassword email@domain.com НовыйПароль</code> (email входа пользователя — старый login@sberpadel.local или реальный)</div>
     <div style="margin-top: 4px; color: var(--text-muted); font-size: 12px;">Команда работает только для супер-администратора через Telegram-бота @SberPadelBot</div>
   </div>
   
@@ -1716,8 +1716,8 @@
     </div>
     <div style="padding: 20px;">
       <div class="form-group">
-        <label class="form-label">Логин</label>
-        <input type="text" class="form-input" id="loginEmail" placeholder="Ваш логин">
+        <label class="form-label">Логин или email</label>
+        <input type="text" class="form-input" id="loginEmail" placeholder="Ваш логин или email" autocomplete="username">
       </div>
       <div class="form-group">
         <label class="form-label">Пароль</label>
@@ -1749,12 +1749,8 @@
         <input type="text" class="form-input" id="regLastName" placeholder="Иванов">
       </div>
       <div class="form-group">
-        <label class="form-label">Логин <span style="color:var(--danger);">*</span> <span style="color:var(--text-muted);font-size:12px;">(будет создан email login@sberpadel.local)</span></label>
-        <input type="text" class="form-input" id="regLogin" placeholder="ivanov">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Email <span style="color:var(--text-muted);font-size:12px;">(может потребоваться для восстановления пароля)</span></label>
-        <input type="email" class="form-input" id="regEmail" placeholder="ivanov@example.com">
+        <label class="form-label">Email <span style="color:var(--danger);">*</span> <span style="color:var(--text-muted);font-size:12px;">(используется для входа и восстановления пароля)</span></label>
+        <input type="email" class="form-input" id="regEmail" placeholder="ivanov@example.com" autocomplete="email">
       </div>
       <div class="form-group">
         <label class="form-label">Пол</label>
@@ -1788,11 +1784,11 @@
     </div>
     <div style="padding: 20px;">
       <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
-        Введите email для восстановления, указанный в вашем профиле. Мы проверим его наличие в системе и отправим запрос администратору.
+        Введите email, указанный в вашем профиле. Придёт письмо со ссылкой для сброса пароля.
       </p>
       <div class="form-group">
-        <label class="form-label">Email для восстановления</label>
-        <input type="email" class="form-input" id="forgotRecoveryEmail" placeholder="your@email.com">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-input" id="forgotRecoveryEmail" placeholder="your@email.com" autocomplete="email">
       </div>
       <div id="forgotResult" style="display:none; margin-bottom: 12px;"></div>
       <button class="btn btn-primary" id="forgotBtn" style="width:100%; margin-bottom: 12px;" onclick="sendPasswordReset()">Сбросить пароль</button>
@@ -2524,16 +2520,34 @@ function closeRegisterModal() {
   }
 }
 
-function signInWithEmail() {
+// Переходный период миграции: логин мигрированного аккаунта -> реальный email.
+// Коллекцию пишет только миграционный скрипт (Admin SDK); чтение открыто всем.
+async function resolveLoginAlias(login) {
+  try {
+    const doc = await db.collection("email_aliases").doc(login).get();
+    if (doc.exists) {
+      const e = (doc.data().email || '').toLowerCase().trim();
+      if (e) return e;
+    }
+  } catch (e) { /* коллекция ещё не развёрнута или правила не обновлены */ }
+  return null;
+}
+
+async function signInWithEmail() {
   const login = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
 
   if (!login || !password) {
-    showToast("Введите логин и пароль", "error");
+    showToast("Введите логин/email и пароль", "error");
     return;
   }
 
-  const email = login + "@sberpadel.local";
+  let email = login.toLowerCase();
+  if (!email.includes('@')) {
+    // Мигрированный аккаунт? Подставляем реальный email по алиасу.
+    // Нет алиаса — старая схема: синтетический домен.
+    email = await resolveLoginAlias(email) || (email + "@sberpadel.local");
+  }
 
   // Пробуем войти
   auth.signInWithEmailAndPassword(email, password)
@@ -2552,8 +2566,7 @@ async function registerUser() {
 
   const firstName = document.getElementById('regFirstName').value.trim();
   const lastName = document.getElementById('regLastName').value.trim();
-  const login = document.getElementById('regLogin').value.trim();
-  const recoveryEmail = document.getElementById('regEmail').value.trim().toLowerCase();
+  const emailRaw = document.getElementById('regEmail').value.trim().toLowerCase();
   const gender = document.getElementById('regGender').value;
   const password = document.getElementById('regPassword').value;
   const confirmPassword = document.getElementById('regConfirmPassword').value;
@@ -2563,8 +2576,15 @@ async function registerUser() {
   warningEl.style.display = 'none';
   warningEl.innerHTML = '';
 
-  if (!firstName || !lastName || !login || !password) {
+  if (!firstName || !lastName || !emailRaw || !password) {
     showToast("Заполните обязательные поля", "error");
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
+    return;
+  }
+
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(emailRaw)) {
+    showToast("Введите корректный email", "error");
     if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
     return;
   }
@@ -2616,7 +2636,9 @@ async function registerUser() {
     console.log("Duplicate check error:", checkErr.message);
   }
 
-  const email = (login + "@sberpadel.local").toLowerCase();
+  const email = emailRaw;
+  // login — информационное поле для совместимости (админка, старые профили)
+  const login = emailRaw.split('@')[0];
 
   try {
     await auth.createUserWithEmailAndPassword(email, password);
@@ -2627,11 +2649,11 @@ async function registerUser() {
         lastName: lastName,
         login: login,
         email: email,
+        recoveryEmail: email,
         role: 'player',
         isApproved: true,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       };
-      if (recoveryEmail) userData.recoveryEmail = recoveryEmail;
       if (gender) userData.gender = gender;
 
       // 1. Create user document
@@ -2670,7 +2692,11 @@ async function registerUser() {
     showToast("Регистрация успешна! Игрок создан.", "success");
     updateUI();
   } catch (err) {
-    showToast("Ошибка регистрации: " + err.message, "error");
+    if (err && err.code === 'auth/email-already-in-use') {
+      showToast("Этот email уже зарегистрирован. Попробуйте войти или восстановить пароль.", "error");
+    } else {
+      showToast("Ошибка регистрации: " + err.message, "error");
+    }
     try { await auth.signOut(); } catch (e) {}
     const btn = document.getElementById('registerBtn');
     if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
@@ -2832,6 +2858,7 @@ async function renderProfile() {
     const login = userData.login || userEmail.split('@')[0];
     const gender = userData.gender || '';
     const email = userData.recoveryEmail || '';
+    const isMigratedAccount = userEmail.indexOf('@sberpadel.local') === -1;
     const telegram = userData.telegram || '';
     const lundaRating = userData.lundaRating || '';
 
@@ -2890,7 +2917,8 @@ async function renderProfile() {
         </div>
         <div style="padding:8px 0;">
           <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Email</label>
-          <input type="email" class="form-input" id="profileEmail" value="${escapeHtml(email)}" placeholder="your@email.com" style="width:100%;">
+          <input type="email" class="form-input" id="profileEmail" value="${escapeHtml(email)}" placeholder="your@email.com" style="width:100%;" ${isMigratedAccount ? 'disabled' : ''}>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">${isMigratedAccount ? 'Email используется для входа. Для изменения обратитесь к администратору.' : 'Укажите вашу настоящую почту — вскоре вход будет осуществляться по ней.'}</div>
         </div>
         <div style="padding:8px 0;">
           <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Telegram</label>
@@ -2932,7 +2960,9 @@ async function saveProfile() {
       lastName: lastName
     };
     if (gender) updateData.gender = gender;
-    if (email) updateData.recoveryEmail = email;
+    // recoveryEmail для мигрированных = email входа, менять нельзя (для старых — ещё можно: это канал миграции)
+    const isMigratedAccount = userEmail.indexOf('@sberpadel.local') === -1;
+    if (!isMigratedAccount && email) updateData.recoveryEmail = email;
     if (telegram) updateData.telegram = telegram;
     if (lundaRating) updateData.lundaRating = parseFloat(parseFloat(lundaRating).toFixed(2));
 
@@ -3005,14 +3035,44 @@ async function sendPasswordReset() {
   }
 
   try {
+    // Новая схема: нативный сброс Firebase — письмо уходит сразу с домена Firebase.
+    await auth.sendPasswordResetEmail(recoveryEmail);
+    resultEl.innerHTML = `
+      <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
+        <div style="color:var(--success); margin-bottom:8px;">✅ Письмо отправлено</div>
+        <div>Ссылка для сброса пароля отправлена на ${escapeHtml(recoveryEmail)}</div>
+      </div>
+    `;
+    resultEl.style.display = 'block';
+  } catch (fbErr) {
+    // Старая схема: аккаунт ещё на синтетическом email — письмо отправляет наш сервер.
+    if (fbErr && fbErr.code === 'auth/user-not-found') {
+      await sendPasswordResetLegacy(recoveryEmail, resultEl);
+    } else if (fbErr && fbErr.code === 'auth/invalid-email') {
+      resultEl.innerHTML = '<div style="color:var(--danger); font-size:13px;">❌ Введите корректный email.</div>';
+      resultEl.style.display = 'block';
+    } else {
+      resultEl.innerHTML = `
+        <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
+          <div style="color:var(--danger); margin-bottom:8px;">❌ Не удалось отправить письмо</div>
+          <div style="font-size:12px;">Обратитесь к администратору в Telegram @ustyugovs</div>
+        </div>
+      `;
+      resultEl.style.display = 'block';
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Сбросить пароль'; }
+  }
+}
+
+async function sendPasswordResetLegacy(recoveryEmail, resultEl) {
+  try {
     const response = await fetch('http://43.98.163.72:8080/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recoveryEmail: recoveryEmail })
     });
-
     const data = await response.json();
-
     if (data.success) {
       resultEl.innerHTML = `
         <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
@@ -3023,7 +3083,7 @@ async function sendPasswordReset() {
     } else {
       resultEl.innerHTML = `
         <div style="background:var(--bg-secondary); border-radius:8px; padding:12px; font-size:13px;">
-          <div style="color:var(--danger); margin-bottom:8px;">❌ ${escapeHtml(data.error || 'Ошибка')}</div>
+          <div style="color:var(--danger); margin-bottom:8px;">❌ ${escapeHtml(data.error || 'Пользователь с таким email не найден')}</div>
         </div>
       `;
     }
@@ -3036,8 +3096,6 @@ async function sendPasswordReset() {
       </div>
     `;
     resultEl.style.display = 'block';
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Сбросить пароль'; }
   }
 }
 
