@@ -5171,8 +5171,22 @@ function renderUsers() {
     return;
   }
 
+  // Скрываем старые синтетические документы мигрированных пользователей (дубли после миграции email).
+  // Новый документ содержит migratedFrom = старый id; у немигрированных дубля нет — они остаются в списке.
+  const migratedFromSet = new Set(
+    admins
+      .filter(a => a.migratedFrom)
+      .map(a => String(a.migratedFrom).toLowerCase().trim())
+  );
+  const visibleAdmins = admins.filter(a => !migratedFromSet.has(String(a.id).toLowerCase().trim()));
+
+  if (visibleAdmins.length === 0) {
+    container.innerHTML = '<div style="padding: 12px; color: var(--text-muted); font-size: 14px;">Нет зарегистрированных пользователей</div>';
+    return;
+  }
+
   // Sort by last name + first name alphabetically
-  const sortedAdmins = [...admins].sort((a, b) => {
+  const sortedAdmins = [...visibleAdmins].sort((a, b) => {
     const nameA = `${a.lastName || ''} ${a.firstName || ''}`.trim().toLowerCase();
     const nameB = `${b.lastName || ''} ${b.firstName || ''}`.trim().toLowerCase();
     return nameA.localeCompare(nameB);
