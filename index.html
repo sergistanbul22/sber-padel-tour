@@ -2050,6 +2050,7 @@ const WHIST_SCHEDULES = {
 // ============================================
 let app, auth, db;
 let currentUser = null;
+let currentLegacyEmail = null; // синтетический email до миграции (migratedFrom из профиля)
 let currentUserData = null; // cached Firestore user data
 let editingTrainingId = null; // режим редактирования тренировки в createTrainingModal
 let userRole = 'player'; // 'player' | 'admin' | 'superadmin'
@@ -2191,14 +2192,21 @@ function dismissIosBanner() {
 }
 
 // Check if current user can edit an item (admin or creator)
+// currentLegacyEmail — синтетический email до миграции: старые createdBy в данных — синтетические.
+function isCreatorEmail(createdBy) {
+  if (!createdBy || !currentUser) return false;
+  const userEmail = (currentUser.email || '').toLowerCase();
+  const creatorEmail = (createdBy || '').toLowerCase();
+  return creatorEmail === userEmail || (currentLegacyEmail && creatorEmail === currentLegacyEmail);
+}
+
 function canEdit(item) {
   if (!currentUser || !item) return false;
   if (isAdmin) return true;
   // Super admin fallback (in case isAdmin not yet set from Firestore)
   const userEmail = (currentUser.email || '').toLowerCase();
   if (isSuperAdminEmail(userEmail)) return true;
-  const creatorEmail = (item.createdBy || '').toLowerCase();
-  return creatorEmail === userEmail;
+  return isCreatorEmail(item.createdBy);
 }
 
 function subscribeToPlayers() {
@@ -2243,6 +2251,7 @@ function subscribeToTournaments() {
 
 function handleAuthStateChanged(user) {
   currentUser = user;
+  currentLegacyEmail = null;
 
   // Отписываемся от предыдущих подписок
   if (unsubscribeUserDoc) {
@@ -2258,6 +2267,9 @@ function handleAuthStateChanged(user) {
     // Записываем время последнего входа
     const userEmail = (user.email || '').toLowerCase();
     if (userEmail) {
+      db.collection("users").doc(userEmail).get().then(d => {
+        if (d.exists) currentLegacyEmail = (d.data().migratedFrom || '').toLowerCase() || null;
+      }).catch(e => console.log("migratedFrom lookup skipped:", e.message));
       db.collection("users").doc(userEmail).update({
         lastLoginAt: firebase.firestore.FieldValue.serverTimestamp()
       }).catch(e => console.log("lastLoginAt update skipped:", e.message));
@@ -3481,8 +3493,8 @@ function openTournament(id) {
   const content = document.getElementById('modalContent');
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizerOrAdmin = isAdmin || (t.createdBy && t.createdBy === userEmail);
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizerOrAdmin = isAdmin || (isCreatorEmail(t.createdBy));
+  const isOrganizer = isCreatorEmail(t.createdBy);
 
   // Compute slots status
   const slots = t.slots || [];
@@ -5883,8 +5895,8 @@ function openPlannedGame(plannedGameId) {
   const userEmail = (currentUser?.email || '').toLowerCase();
   const endDateTime = new Date((pg.date || '') + 'T' + (pg.timeEnd || '23:59'));
   const isPast = endDateTime < new Date();
-  const isOrganizerOrAdmin = isAdmin || (pg.createdBy && pg.createdBy === userEmail);
-  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  const isOrganizerOrAdmin = isAdmin || (isCreatorEmail(pg.createdBy));
+  const isOrganizer = isCreatorEmail(pg.createdBy);
 
   // Slots display
   let slotsHtml = '';
@@ -6166,7 +6178,7 @@ async function confirmPlannedGameApplication(plannedGameId, playerId) {
   if (!pg) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(pg.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может подтверждать заявки", "error");
     return;
@@ -6211,7 +6223,7 @@ async function changePlannedGamePlayer(plannedGameId, slotIndex, newPlayerId) {
   if (!pg || !pg.slots || slotIndex < 0 || slotIndex >= pg.slots.length) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(pg.createdBy);
   if (!isSuperAdmin && !isOrganizer) {
     showToast("Только организатор или супер-админ может редактировать записи", "error");
     return;
@@ -6383,7 +6395,7 @@ async function confirmTournamentApplication(tournamentId, playerId) {
   if (!t) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может подтверждать заявки", "error");
     return;
@@ -6452,7 +6464,7 @@ async function rejectTournamentApplication(tournamentId, playerId) {
   if (!t) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может удалять заявки", "error");
     return;
@@ -6479,7 +6491,7 @@ async function rejectPlannedGameApplication(plannedGameId, playerId) {
   if (!pg) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(pg.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может удалять заявки", "error");
     return;
@@ -6506,7 +6518,7 @@ async function rejectTrainingApplication(trainingId, playerId) {
   if (!tr) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = tr.createdBy && tr.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(tr.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может удалять заявки", "error");
     return;
@@ -6562,7 +6574,7 @@ async function changeTournamentPlayer(tournamentId, slotIndex, newPlayerId) {
   if (!t || !t.slots || slotIndex < 0 || slotIndex >= t.slots.length) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (!isSuperAdmin && !isOrganizer) {
     showToast("Только организатор или супер-админ может редактировать записи", "error");
     return;
@@ -6712,7 +6724,7 @@ async function deletePlannedGame(plannedGameId) {
   if (!pg) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = pg.createdBy && pg.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(pg.createdBy);
   if (!isSuperAdmin && !isOrganizer) {
     showToast("Только организатор или супер-админ может удалить", "error");
     return;
@@ -7715,7 +7727,7 @@ function openTraining(trainingId) {
 
   let slotsHtml = '';
   const isOrganizerOrAdmin = isAdmin || (t.createdBy && (t.createdBy === userEmail));
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (t.slots && t.slots.length > 0) {
     t.slots.forEach((slot, idx) => {
       const infoBtn = (isOrganizerOrAdmin && slot.playerId)
@@ -7927,7 +7939,7 @@ async function changeTrainingPlayer(trainingId, slotIndex, newPlayerId) {
   if (!t || !t.slots || slotIndex < 0 || slotIndex >= t.slots.length) return;
 
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (!isSuperAdmin && !isOrganizer) {
     showToast("Только организатор или супер-админ может редактировать записи", "error");
     return;
@@ -8147,7 +8159,7 @@ async function confirmTrainingApplication(trainingId, playerId) {
 
   // Only organizer or admin can confirm
   const userEmail = (currentUser?.email || '').toLowerCase();
-  const isOrganizer = t.createdBy && t.createdBy === userEmail;
+  const isOrganizer = isCreatorEmail(t.createdBy);
   if (!isAdmin && !isOrganizer) {
     showToast("Только организатор или администратор может подтверждать заявки", "error");
     return;
