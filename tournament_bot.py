@@ -1054,7 +1054,9 @@ def handle_setpassword(chat_id, from_user, text):
         send_telegram(
             "❌ Неверный формат.\n\n"
             "Использование:\n"
-            "/setpassword email@sberpadel.local новый_пароль",
+            "/setpassword email новый_пароль\n\n"
+            "(email = логин входа пользователя: реальный, например ivanov@gmail.com, "
+            "или старый ivanov@sberpadel.local если аккаунт ещё не мигрирован)",
             chat_id
         )
         return
