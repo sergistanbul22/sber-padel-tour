@@ -7874,7 +7874,7 @@ function openTraining(trainingId) {
       ${(isOrganizerOrAdmin && !isPast) ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openEditTraining('${trainingId}')">✏️ Изменить</button>` : ''}
       ${(isClosed && isOrganizerOrAdmin && !isPast) ? `
         <div style="display: flex; gap: 8px; margin-top: 12px;">
-          <button class="btn btn-primary" style="flex: 1; margin-top: 0;" onclick="startTournamentFromTraining('${trainingId}')">🏆 Начать турнир</button>
+          <button class="btn btn-secondary" style="flex: 1; margin-top: 0;" onclick="startTournamentFromTraining('${trainingId}')">🏆 Начать турнир</button>
           <button class="btn btn-secondary" style="flex: 1; margin-top: 0;" onclick="startPlannedGameFromTraining('${trainingId}')">🎯 Распределить пары</button>
         </div>` : ''}
     </div>

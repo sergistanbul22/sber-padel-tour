@@ -7872,6 +7872,11 @@ function openTraining(trainingId) {
       </div>
       ${actionBtn}
       ${(isOrganizerOrAdmin && !isPast) ? `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openEditTraining('${trainingId}')">✏️ Изменить</button>` : ''}
+      ${(isClosed && isOrganizerOrAdmin && !isPast) ? `
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+          <button class="btn btn-secondary" style="flex: 1; margin-top: 0;" onclick="startTournamentFromTraining('${trainingId}')">🏆 Начать турнир</button>
+          <button class="btn btn-secondary" style="flex: 1; margin-top: 0;" onclick="startPlannedGameFromTraining('${trainingId}')">🎯 Распределить пары</button>
+        </div>` : ''}
     </div>
   `;
 
@@ -7886,6 +7891,104 @@ function openTraining(trainingId) {
   document.getElementById('modalContent').innerHTML = content;
   modalEl.classList.add('open');
   console.log('[DEEP-LINK] Modal opened successfully');
+}
+
+// ===== Закрытая тренировка → турнир: копируем реквизиты и участников =====
+function startTournamentFromTraining(trainingId) {
+  const t = trainings.find(x => x.id === trainingId);
+  if (!t) return;
+
+  const participants = (t.slots || []).filter(s => s.playerId);
+
+  // Карточка тренировки просто закрывается, открываем модалку создания турнира
+  closeModal();
+  openCreateTournamentModal();
+
+  // Название: Турнир — <дата тренировки>
+  const dateStr = formatTrainingDate(t);
+  document.getElementById('tournamentName').value = `Турнир — ${dateStr}`;
+
+  // Реквизиты из карточки тренировки
+  if (t.date) document.getElementById('tournamentDate').value = t.date;
+  document.getElementById('tournamentTimeStart').value = t.timeStart || '';
+  document.getElementById('tournamentTimeEnd').value = t.timeEnd || '';
+  const locSelect = document.getElementById('tournamentLocation');
+  if (t.location) {
+    // Если локации нет в справочнике — добавляем её опцией
+    if (![...locSelect.options].some(o => o.value === t.location)) {
+      locSelect.add(new Option(t.location, t.location));
+    }
+    locSelect.value = t.location;
+  }
+  document.getElementById('tournamentComment').value = (t.comment || '').slice(0, 50);
+
+  // Размер: ближайший формат, в который влезают все участники (4/8/12/16)
+  const sizes = [4, 8, 12, 16];
+  const size = sizes.find(s => s >= Math.max(participants.length, 1)) || 16;
+  document.getElementById('tournamentSize').value = String(size);
+  renderTournamentSlotInputs();
+
+  // Список участников → слоты турнира
+  participants.forEach((s, i) => {
+    const sel = document.getElementById(`tournamentSlot_${i}`);
+    if (!sel) return;
+    // Игрок может отсутствовать в общем списке (например, старый id) — добавляем опцией
+    if (![...sel.options].some(o => o.value === s.playerId)) {
+      sel.add(new Option(s.playerName || 'Игрок', s.playerId));
+    }
+    sel.value = s.playerId;
+  });
+
+  showToast('Реквизиты и участники скопированы из тренировки', 'success');
+}
+
+// ===== Закрытая тренировка → запланированная игра: копируем реквизиты и участников =====
+function startPlannedGameFromTraining(trainingId) {
+  const t = trainings.find(x => x.id === trainingId);
+  if (!t) return;
+  if (!currentUser) {
+    showToast('Войдите, чтобы запланировать игру', 'error');
+    return;
+  }
+
+  const participants = (t.slots || []).filter(s => s.playerId);
+
+  // Карточка тренировки просто закрывается, открываем модалку создания запланированной игры
+  closeModal();
+  openPlanGameModal();
+
+  // Реквизиты из карточки тренировки
+  if (t.date) document.getElementById('planGameDate').value = t.date;
+  document.getElementById('planGameTimeStart').value = t.timeStart || '';
+  document.getElementById('planGameTimeEnd').value = t.timeEnd || '';
+  const locSelect = document.getElementById('planGameLocation');
+  if (t.location) {
+    // Если локации нет в справочнике — добавляем её опцией
+    if (![...locSelect.options].some(o => o.value === t.location)) {
+      locSelect.add(new Option(t.location, t.location));
+    }
+    locSelect.value = t.location;
+  }
+  document.getElementById('planGameComment').value = (t.comment || '').slice(0, 50);
+
+  // Количество мест: ближайшее из доступных, в которое влезают все участники
+  const allowed = [4, 6, 8, 10, 12, 16];
+  const size = allowed.find(s => s >= Math.max(participants.length, 4)) || 16;
+  document.getElementById('planGameSlotsCount').value = String(size);
+  renderPlanGameSlotInputs();
+
+  // Список участников → слоты игры
+  participants.forEach((s, i) => {
+    const sel = document.getElementById(`planGameSlot_${i}`);
+    if (!sel) return;
+    // Игрок может отсутствовать в общем списке (например, старый id) — добавляем опцией
+    if (![...sel.options].some(o => o.value === s.playerId)) {
+      sel.add(new Option(s.playerName || 'Игрок', s.playerId));
+    }
+    sel.value = s.playerId;
+  });
+
+  showToast('Реквизиты и участники скопированы из тренировки', 'success');
 }
 
 function showSlotPlayerInfo(playerId, playerName) {
