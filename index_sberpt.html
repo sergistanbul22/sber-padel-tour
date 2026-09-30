@@ -2884,11 +2884,7 @@ async function renderProfile() {
     const playerName = playerData ? playerData.name : '-';
     const rating = playerData ? (typeof playerData.rating === 'number' ? playerData.rating : 100) : '-';
     const medals = playerData ? playerData.medals : { gold: 0, silver: 0, bronze: 0 };
-    const medalStr = medals ?
-      (medals.gold ? '🥇'.repeat(medals.gold) : '') +
-      (medals.silver ? '🥈'.repeat(medals.silver) : '') +
-      (medals.bronze ? '🥉'.repeat(medals.bronze) : '')
-      : '-';
+    const medalStr = formatMedals(medals);
 
     const firstName = userData.firstName || '';
     const lastName = userData.lastName || '';
@@ -3254,7 +3250,7 @@ function renderPlayers() {
 
   sorted.forEach((p, idx) => {
     const medals = p.medals || { gold: 0, silver: 0, bronze: 0 };
-    const medalStr = '🥇'.repeat(medals.gold) + '🥈'.repeat(medals.silver) + '🥉'.repeat(medals.bronze);
+    const medalStr = formatMedals(medals);
     const rankClass = idx === 0 ? 'rank-1' : idx === 1 ? 'rank-2' : idx === 2 ? 'rank-3' : 'rank-other';
     const finishedTournaments = tournamentCountFinished[p.id] || 0;
     const hasGames = ((p.tournamentsPlayed || 0) + (gamesCount[p.id] || 0)) > 0 || finishedTournaments > 0;
@@ -8337,6 +8333,17 @@ function escapeHtml(text) {
 function formatRating(rating) {
   if (typeof rating !== 'number') return '—';
   return rating === 0 ? '—' : String(rating);
+}
+
+// ===== Формат медалей: при >5 всего — компактный вид «🥇х2 🥈х2 🥉х3» =====
+function formatMedals(medals) {
+  const g = medals?.gold || 0;
+  const s = medals?.silver || 0;
+  const b = medals?.bronze || 0;
+  if (g + s + b <= 5) {
+    return '🥇'.repeat(g) + '🥈'.repeat(s) + '🥉'.repeat(b);
+  }
+  return [g ? `🥇х${g}` : '', s ? `🥈х${s}` : '', b ? `🥉х${b}` : ''].filter(Boolean).join(' ');
 }
 
 // ============================================
