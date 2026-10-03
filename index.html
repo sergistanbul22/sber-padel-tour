@@ -553,6 +553,81 @@
     font-size: 15px;
   }
 
+  /* ===== Аватарки игроков ===== */
+  .player-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    vertical-align: middle;
+    margin-right: 10px;
+    flex-shrink: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    user-select: none;
+  }
+  img.player-avatar { cursor: zoom-in; }
+
+  @media (max-width: 768px) {
+    .player-avatar { width: 28px; height: 28px; margin-right: 8px; font-size: 12px; }
+  }
+
+  .profile-avatar-row { display: flex; align-items: center; gap: 14px; padding: 8px 0 16px; border-bottom: 1px solid var(--border); }
+  .profile-avatar-img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
+  .profile-avatar-placeholder { display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; color: #fff; font-size: 24px; font-weight: 700; }
+
+  .avatar-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .avatar-viewer.open { opacity: 1; }
+  .avatar-viewer img {
+    max-width: 92vw;
+    max-height: 86vh;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, .6);
+    cursor: default;
+  }
+  .avatar-viewer-caption {
+    position: absolute;
+    bottom: 24px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
+    pointer-events: none;
+  }
+  .avatar-viewer-close {
+    position: absolute;
+    top: 18px;
+    right: 22px;
+    background: rgba(255, 255, 255, .12);
+    border: none;
+    color: #fff;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .avatar-viewer-close:hover { background: rgba(255, 255, 255, .25); }
+
   .medals {
     display: flex;
     gap: 2px;
@@ -1703,6 +1778,47 @@
     </div>
     <div id="modalContent">
       <!-- Dynamic content -->
+    </div>
+  </div>
+</div>
+
+<!-- Avatar Viewer (как в Telegram) -->
+<div class="avatar-viewer" id="avatarViewer" style="display:none;" onclick="if(event.target===this)closeAvatarViewer()">
+  <button class="avatar-viewer-close" onclick="closeAvatarViewer()">&times;</button>
+  <img id="avatarViewerImg" src="" alt="">
+  <div class="avatar-viewer-caption" id="avatarViewerCaption"></div>
+</div>
+
+<!-- Avatar Crop Modal (обрезка с круглым гидом) -->
+<div class="modal-overlay" id="avatarCropModal">
+  <div class="modal" style="max-width: 420px;">
+    <div class="modal-header">
+      <span class="modal-title">📷 Обрезка фото</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeAvatarCrop()">✕</button>
+    </div>
+    <div style="padding: 16px;">
+      <div id="cropViewport"
+           style="position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; border-radius:12px; background:#111; touch-action:none; cursor:grab;"
+           onpointerdown="cropPointerDown(event)"
+           onpointermove="cropPointerMove(event)"
+           onpointerup="cropPointerUp(event)"
+           onpointercancel="cropPointerUp(event)"
+           onwheel="cropWheel(event)">
+        <canvas id="cropCanvas" style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
+        <div style="position:absolute; left:50%; top:50%; width:78%; aspect-ratio:1/1; transform:translate(-50%,-50%); border-radius:50%; border:2px solid rgba(255,255,255,0.9); box-shadow:0 0 0 9999px rgba(0,0,0,0.55); pointer-events:none;"></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+        <span style="font-size:12px; color:var(--text-muted);">−</span>
+        <input type="range" id="cropZoom" min="100" max="300" value="100" style="flex:1;" oninput="cropSliderChanged(event)">
+        <span style="font-size:12px; color:var(--text-muted);">+</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
+        Перетаскивайте фото, чтобы лицо оказалось по центру круга.<br>Масштаб — ползунком или колесом мыши.
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="closeAvatarCrop()">Отмена</button>
+        <button class="btn btn-primary" style="flex:1;" id="avatarCropSaveBtn" onclick="saveAvatarCrop()">✅ Сохранить</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2882,6 +2998,21 @@ async function renderProfile() {
     }
 
     const playerName = playerData ? playerData.name : '-';
+    currentProfilePlayerId = (userData.playerId && playerData) ? userData.playerId : null;
+    const playerInitial = escapeHtml(String(playerName || '?').trim().charAt(0).toUpperCase());
+    const avatarBlock = currentProfilePlayerId ? `
+        <div class="profile-avatar-row">
+          ${playerData.avatar ? `<img class="profile-avatar-img" src="${playerData.avatar}" alt="${escapeHtml(playerName)}">` : `<span class="profile-avatar-placeholder" style="background:${avatarColor(playerName)}">${playerInitial}</span>`}
+          <div>
+            <div style="font-weight:600; font-size:15px;">${escapeHtml(playerName)}</div>
+            <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-sm" id="avatarUploadBtn" onclick="document.getElementById('avatarFileInput').click()">📷 Изменить фото</button>
+              ${playerData.avatar ? '<button class="btn btn-secondary btn-sm" onclick="removeAvatar()">🗑 Удалить</button>' : ''}
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.5;">JPG/PNG до 10 МБ.<br>Обрезка с центровкой по кругу, сохраним квадрат 512 px.</div>
+          </div>
+        </div>
+        <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" onchange="onAvatarFileSelected(event)">` : '';
     const rating = playerData ? (typeof playerData.rating === 'number' ? playerData.rating : 100) : '-';
     const medals = playerData ? playerData.medals : { gold: 0, silver: 0, bronze: 0 };
     const medalStr = formatMedals(medals);
@@ -2891,6 +3022,7 @@ async function renderProfile() {
 
     container.innerHTML = `
       <div style="display:grid; gap:12px;">
+        ${avatarBlock}
         <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
           <span style="color:var(--text-muted); font-size:14px;">Логин</span>
           <span style="font-weight:600;">${escapeHtml(login)}</span>
@@ -3260,7 +3392,7 @@ function renderPlayers() {
 
     html += `<tr data-player-id="${p.id}">
       <td><span class="player-rank ${rankClass}">${idx + 1}</span></td>
-      <td><span class="player-name">${escapeHtml(p.name)}</span>${isNewbie ? ' <span style="font-size:11px;color:var(--success);">[новичок]</span>' : ''}</td>
+      <td>${renderAvatarHtml(p)}<span class="player-name">${escapeHtml(p.name)}</span>${isNewbie ? ' <span style="font-size:11px;color:var(--success);">[новичок]</span>' : ''}</td>
       <td><span style="font-weight:700;color:var(--accent);">${ratingVal}</span>${isSuperAdmin && hasGames ? ` <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); editPlayerRating('${p.id}', '${escapeHtml(p.name)}', ${typeof p.rating === 'number' ? p.rating : 100}, ${p.tournamentsPlayed || 0})" style="margin-left:4px;font-size:10px;padding:2px 6px">✏️</button>` : ''}</td>
       <td><div class="medals">${medalStr || '<span style="color:var(--text-muted)">-</span>'}</div></td>
       <td>${p.tournamentCount || 0}</td>
@@ -8358,6 +8490,212 @@ function formatMedals(medals) {
     return '🥇'.repeat(g) + '🥈'.repeat(s) + '🥉'.repeat(b);
   }
   return [g ? `🥇х${g}` : '', s ? `🥈х${s}` : '', b ? `🥉х${b}` : ''].filter(Boolean).join(' ');
+}
+
+// ============================================
+// АВАТАРКИ
+// ============================================
+const AVATAR_COLORS = ['#e17076', '#eda86c', '#a695e7', '#7bc862', '#6ec9cb', '#65aadd', '#ee7aae'];
+
+function avatarColor(name) {
+  let h = 0;
+  const s = String(name || '?');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+// Кружок-аватар в таблице: фото либо заглушка с первой буквой (как в Telegram)
+function renderAvatarHtml(p) {
+  const name = escapeHtml(p.name || '?');
+  if (p.avatar) {
+    return `<img class="player-avatar" src="${p.avatar}" alt="${name}" title="${name} — нажмите, чтобы увеличить" loading="lazy" onclick="event.stopPropagation(); openAvatarViewer('${p.id}')">`;
+  }
+  const initial = escapeHtml(String(p.name || '?').trim().charAt(0).toUpperCase());
+  return `<span class="player-avatar" style="background:${avatarColor(p.name)}">${initial}</span>`;
+}
+
+function openAvatarViewer(playerId) {
+  const p = players.find(x => x.id === playerId);
+  if (!p || !p.avatar) return;
+  document.getElementById('avatarViewerImg').src = p.avatar;
+  document.getElementById('avatarViewerCaption').textContent = p.name || '';
+  const v = document.getElementById('avatarViewer');
+  v.style.display = 'flex';
+  requestAnimationFrame(() => v.classList.add('open'));
+  document.addEventListener('keydown', avatarViewerEsc);
+}
+
+function closeAvatarViewer() {
+  const v = document.getElementById('avatarViewer');
+  v.classList.remove('open');
+  document.removeEventListener('keydown', avatarViewerEsc);
+  setTimeout(() => {
+    v.style.display = 'none';
+    document.getElementById('avatarViewerImg').src = '';
+  }, 160);
+}
+
+function avatarViewerEsc(e) {
+  if (e.key === 'Escape') closeAvatarViewer();
+}
+
+// ============================================
+// Обрезка и центровка аватара (круглый гид, как в Telegram)
+// ============================================
+let cropImg = null, cropUrl = null, cropScale = 1, cropOx = 0, cropOy = 0, cropV = 320, cropDragging = false, cropLast = null;
+
+function openAvatarCrop(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) {
+    alert('Нужен файл изображения (JPG, PNG…)'); return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert('Файл больше 10 МБ — выберите фото поменьше'); return;
+  }
+  cropUrl = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    cropImg = img;
+    const vp = document.getElementById('cropViewport');
+    cropV = vp.clientWidth || 320;
+    const canvas = document.getElementById('cropCanvas');
+    const k = canvas.width / cropV; // dpr для чёткости
+    canvas.height = cropV * k;
+    const min = cropV / Math.max(1, Math.min(img.width, img.height));
+    cropScale = min; // zoom=1 → короткая сторона заполняет вьюпорт
+    cropOx = (cropV - img.width * cropScale) / 2;
+    cropOy = (cropV - img.height * cropScale) / 2;
+    document.getElementById('cropZoom').value = 100;
+    document.getElementById('avatarCropModal').classList.add('show');
+    renderCrop();
+  };
+  img.onerror = () => { alert('Не удалось прочитать изображение'); };
+  img.src = cropUrl;
+}
+
+function cropMinScale() {
+  return cropV / Math.max(1, Math.min(cropImg.width, cropImg.height));
+}
+
+function cropClamp() {
+  const dw = cropImg.width * cropScale, dh = cropImg.height * cropScale;
+  cropOx = Math.min(0, Math.max(cropV - dw, cropOx));
+  cropOy = Math.min(0, Math.max(cropV - dh, cropOy));
+}
+
+function renderCrop() {
+  const canvas = document.getElementById('cropCanvas');
+  const ctx = canvas.getContext('2d');
+  const k = canvas.width / cropV;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.clearRect(0, 0, cropV, cropV);
+  ctx.drawImage(cropImg, cropOx, cropOy, cropImg.width * cropScale, cropImg.height * cropScale);
+}
+
+function applyZoomAt(px, py, f) {
+  const min = cropMinScale();
+  const ns = Math.min(min * 3, Math.max(min, cropScale * f));
+  const k = ns / cropScale;
+  cropOx = px - (px - cropOx) * k;
+  cropOy = py - (py - cropOy) * k;
+  cropScale = ns;
+  cropClamp(); renderCrop();
+  document.getElementById('cropZoom').value = Math.round((cropScale / min) * 100);
+}
+
+function cropPointerDown(e) {
+  cropDragging = true;
+  cropLast = { x: e.clientX, y: e.clientY };
+  e.currentTarget.setPointerCapture(e.pointerId);
+}
+
+function cropPointerMove(e) {
+  if (!cropDragging) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  cropOx += (e.clientX - cropLast.x) * (cropV / rect.width);
+  cropOy += (e.clientY - cropLast.y) * (cropV / rect.width);
+  cropLast = { x: e.clientX, y: e.clientY };
+  cropClamp(); renderCrop();
+}
+
+function cropPointerUp() {
+  cropDragging = false;
+}
+
+function cropWheel(e) {
+  e.preventDefault();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * (cropV / rect.width);
+  const py = (e.clientY - rect.top) * (cropV / rect.width);
+  applyZoomAt(px, py, Math.pow(1.0015, -e.deltaY));
+}
+
+function cropSliderChanged(e) {
+  const target = cropMinScale() * (e.target.value / 100);
+  applyZoomAt(cropV / 2, cropV / 2, target / cropScale);
+}
+
+async function saveAvatarCrop() {
+  if (!cropImg || !currentProfilePlayerId) return;
+  const btn = document.getElementById('avatarCropSaveBtn');
+  btn.disabled = true; btn.textContent = '⏳ Сохранение…';
+  try {
+    // экспортируем квадрат вьюпорта в пикселях исходника → 512×512
+    const side = cropV / cropScale;
+    const sx = -cropOx / cropScale, sy = -cropOy / cropScale;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cropImg, sx, sy, side, side, 0, 0, 512, 512);
+    const blob = await new Promise((res, rej) =>
+      canvas.toBlob(b => b ? res(b) : rej(new Error('браузер не смог обработать изображение')), 'image/jpeg', 0.87));
+    if (blob.size > 200 * 1024) throw new Error('даже после сжатия фото больше 200 КБ — выберите другое');
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('ошибка чтения файла'));
+      r.readAsDataURL(blob);
+    });
+    await db.collection('padel_players').doc(currentProfilePlayerId).update({
+      avatar: dataUrl,
+      avatarUpdatedAt: Date.now()
+    });
+    // мгновенно подменяем фото в профиле без ожидания снапшота
+    const holder = document.querySelector('.profile-avatar-img, .profile-avatar-placeholder');
+    if (holder) holder.outerHTML = `<img class="profile-avatar-img" src="${dataUrl}" alt="">`;
+    closeAvatarCrop();
+  } catch (e) {
+    alert('Не удалось сохранить фото: ' + (e.message || e));
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Сохранить';
+  }
+}
+
+function closeAvatarCrop() {
+  document.getElementById('avatarCropModal').classList.remove('show');
+  if (cropUrl) { URL.revokeObjectURL(cropUrl); cropUrl = null; }
+  cropImg = null;
+}
+
+// id игрока из профиля — заполняется в renderProfile
+let currentProfilePlayerId = null;
+
+function onAvatarFileSelected(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file || !currentProfilePlayerId) return;
+  openAvatarCrop(file);
+}
+
+async function removeAvatar() {
+  if (!currentProfilePlayerId) return;
+  if (!confirm('Удалить фото профиля?')) return;
+  await db.collection('padel_players').doc(currentProfilePlayerId).update({
+    avatar: firebase.firestore.FieldValue.delete(),
+    avatarUpdatedAt: Date.now()
+  });
+  renderProfile();
 }
 
 // ============================================
