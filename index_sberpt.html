@@ -1789,6 +1789,40 @@
   <div class="avatar-viewer-caption" id="avatarViewerCaption"></div>
 </div>
 
+<!-- Avatar Crop Modal (обрезка с круглым гидом) -->
+<div class="modal-overlay" id="avatarCropModal">
+  <div class="modal" style="max-width: 420px;">
+    <div class="modal-header">
+      <span class="modal-title">📷 Обрезка фото</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeAvatarCrop()">✕</button>
+    </div>
+    <div style="padding: 16px;">
+      <div id="cropViewport"
+           style="position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; border-radius:12px; background:#111; touch-action:none; cursor:grab;"
+           onpointerdown="cropPointerDown(event)"
+           onpointermove="cropPointerMove(event)"
+           onpointerup="cropPointerUp(event)"
+           onpointercancel="cropPointerUp(event)"
+           onwheel="cropWheel(event)">
+        <canvas id="cropCanvas" style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
+        <div style="position:absolute; left:50%; top:50%; width:78%; aspect-ratio:1/1; transform:translate(-50%,-50%); border-radius:50%; border:2px solid rgba(255,255,255,0.9); box-shadow:0 0 0 9999px rgba(0,0,0,0.55); pointer-events:none;"></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:14px;">
+        <span style="font-size:12px; color:var(--text-muted);">−</span>
+        <input type="range" id="cropZoom" min="100" max="300" value="100" style="flex:1;" oninput="cropSliderChanged(event)">
+        <span style="font-size:12px; color:var(--text-muted);">+</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:8px; line-height:1.5;">
+        Перетаскивайте фото, чтобы лицо оказалось по центру круга.<br>Масштаб — ползунком или колесом мыши.
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="closeAvatarCrop()">Отмена</button>
+        <button class="btn btn-primary" style="flex:1;" id="avatarCropSaveBtn" onclick="saveAvatarCrop()">✅ Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Login Modal -->
 <div class="modal-overlay" id="loginModal" onclick="if(event.target===this)closeLoginModal()">
   <div class="modal" style="max-width: 400px;">
@@ -2975,7 +3009,7 @@ async function renderProfile() {
               <button class="btn btn-secondary btn-sm" id="avatarUploadBtn" onclick="document.getElementById('avatarFileInput').click()">📷 Изменить фото</button>
               ${playerData.avatar ? '<button class="btn btn-secondary btn-sm" onclick="removeAvatar()">🗑 Удалить</button>' : ''}
             </div>
-            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.5;">JPG/PNG до 10 МБ.<br>Автоматически сожмём до 512 px.</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.5;">JPG/PNG до 10 МБ.<br>Обрезка с центровкой по кругу, сохраним квадрат 512 px.</div>
           </div>
         </div>
         <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" onchange="onAvatarFileSelected(event)">` : '';
@@ -8505,72 +8539,153 @@ function avatarViewerEsc(e) {
   if (e.key === 'Escape') closeAvatarViewer();
 }
 
-// Сжатие на клиенте: максимум 512 px по большей стороне, JPEG q0.87, потолок 200 КБ
-function compressAvatar(file) {
-  return new Promise((resolve, reject) => {
-    if (!file || !file.type || !file.type.startsWith('image/')) {
-      reject(new Error('нужен файл изображения (JPG, PNG…)')); return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      reject(new Error('файл больше 10 МБ — выберите фото поменьше')); return;
-    }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const MAX = 512;
-        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('браузер не смог обработать изображение')); return; }
-          if (blob.size > 200 * 1024) { reject(new Error('даже после сжатия фото больше 200 КБ — выберите другое')); return; }
-          const r = new FileReader();
-          r.onload = () => resolve(r.result);
-          r.onerror = () => reject(new Error('ошибка чтения файла'));
-          r.readAsDataURL(blob);
-        }, 'image/jpeg', 0.87);
-      } catch (err) {
-        URL.revokeObjectURL(url);
-        reject(err);
-      }
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('не удалось прочитать изображение'));
-    };
-    img.src = url;
-  });
+// ============================================
+// Обрезка и центровка аватара (круглый гид, как в Telegram)
+// ============================================
+let cropImg = null, cropUrl = null, cropScale = 1, cropOx = 0, cropOy = 0, cropV = 320, cropDragging = false, cropLast = null;
+
+function openAvatarCrop(file) {
+  if (!file || !file.type || !file.type.startsWith('image/')) {
+    alert('Нужен файл изображения (JPG, PNG…)'); return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert('Файл больше 10 МБ — выберите фото поменьше'); return;
+  }
+  cropUrl = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    cropImg = img;
+    const vp = document.getElementById('cropViewport');
+    cropV = vp.clientWidth || 320;
+    const canvas = document.getElementById('cropCanvas');
+    const k = canvas.width / cropV; // dpr для чёткости
+    canvas.height = cropV * k;
+    const min = cropV / Math.max(1, Math.min(img.width, img.height));
+    cropScale = min; // zoom=1 → короткая сторона заполняет вьюпорт
+    cropOx = (cropV - img.width * cropScale) / 2;
+    cropOy = (cropV - img.height * cropScale) / 2;
+    document.getElementById('cropZoom').value = 100;
+    document.getElementById('avatarCropModal').classList.add('show');
+    renderCrop();
+  };
+  img.onerror = () => { alert('Не удалось прочитать изображение'); };
+  img.src = cropUrl;
+}
+
+function cropMinScale() {
+  return cropV / Math.max(1, Math.min(cropImg.width, cropImg.height));
+}
+
+function cropClamp() {
+  const dw = cropImg.width * cropScale, dh = cropImg.height * cropScale;
+  cropOx = Math.min(0, Math.max(cropV - dw, cropOx));
+  cropOy = Math.min(0, Math.max(cropV - dh, cropOy));
+}
+
+function renderCrop() {
+  const canvas = document.getElementById('cropCanvas');
+  const ctx = canvas.getContext('2d');
+  const k = canvas.width / cropV;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.clearRect(0, 0, cropV, cropV);
+  ctx.drawImage(cropImg, cropOx, cropOy, cropImg.width * cropScale, cropImg.height * cropScale);
+}
+
+function applyZoomAt(px, py, f) {
+  const min = cropMinScale();
+  const ns = Math.min(min * 3, Math.max(min, cropScale * f));
+  const k = ns / cropScale;
+  cropOx = px - (px - cropOx) * k;
+  cropOy = py - (py - cropOy) * k;
+  cropScale = ns;
+  cropClamp(); renderCrop();
+  document.getElementById('cropZoom').value = Math.round((cropScale / min) * 100);
+}
+
+function cropPointerDown(e) {
+  cropDragging = true;
+  cropLast = { x: e.clientX, y: e.clientY };
+  e.currentTarget.setPointerCapture(e.pointerId);
+}
+
+function cropPointerMove(e) {
+  if (!cropDragging) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  cropOx += (e.clientX - cropLast.x) * (cropV / rect.width);
+  cropOy += (e.clientY - cropLast.y) * (cropV / rect.width);
+  cropLast = { x: e.clientX, y: e.clientY };
+  cropClamp(); renderCrop();
+}
+
+function cropPointerUp() {
+  cropDragging = false;
+}
+
+function cropWheel(e) {
+  e.preventDefault();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * (cropV / rect.width);
+  const py = (e.clientY - rect.top) * (cropV / rect.width);
+  applyZoomAt(px, py, Math.pow(1.0015, -e.deltaY));
+}
+
+function cropSliderChanged(e) {
+  const target = cropMinScale() * (e.target.value / 100);
+  applyZoomAt(cropV / 2, cropV / 2, target / cropScale);
+}
+
+async function saveAvatarCrop() {
+  if (!cropImg || !currentProfilePlayerId) return;
+  const btn = document.getElementById('avatarCropSaveBtn');
+  btn.disabled = true; btn.textContent = '⏳ Сохранение…';
+  try {
+    // экспортируем квадрат вьюпорта в пикселях исходника → 512×512
+    const side = cropV / cropScale;
+    const sx = -cropOx / cropScale, sy = -cropOy / cropScale;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cropImg, sx, sy, side, side, 0, 0, 512, 512);
+    const blob = await new Promise((res, rej) =>
+      canvas.toBlob(b => b ? res(b) : rej(new Error('браузер не смог обработать изображение')), 'image/jpeg', 0.87));
+    if (blob.size > 200 * 1024) throw new Error('даже после сжатия фото больше 200 КБ — выберите другое');
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('ошибка чтения файла'));
+      r.readAsDataURL(blob);
+    });
+    await db.collection('padel_players').doc(currentProfilePlayerId).update({
+      avatar: dataUrl,
+      avatarUpdatedAt: Date.now()
+    });
+    // мгновенно подменяем фото в профиле без ожидания снапшота
+    const holder = document.querySelector('.profile-avatar-img, .profile-avatar-placeholder');
+    if (holder) holder.outerHTML = `<img class="profile-avatar-img" src="${dataUrl}" alt="">`;
+    closeAvatarCrop();
+  } catch (e) {
+    alert('Не удалось сохранить фото: ' + (e.message || e));
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Сохранить';
+  }
+}
+
+function closeAvatarCrop() {
+  document.getElementById('avatarCropModal').classList.remove('show');
+  if (cropUrl) { URL.revokeObjectURL(cropUrl); cropUrl = null; }
+  cropImg = null;
 }
 
 // id игрока из профиля — заполняется в renderProfile
 let currentProfilePlayerId = null;
 
-async function onAvatarFileSelected(event) {
+function onAvatarFileSelected(event) {
   const file = event.target.files[0];
   event.target.value = '';
   if (!file || !currentProfilePlayerId) return;
-  const btn = document.getElementById('avatarUploadBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Обработка…';
-  try {
-    const dataUrl = await compressAvatar(file);
-    await db.collection('padel_players').doc(currentProfilePlayerId).update({
-      avatar: dataUrl,
-      avatarUpdatedAt: Date.now()
-    });
-    btn.textContent = '✅ Сохранено';
-  } catch (e) {
-    alert('Не удалось загрузить фото: ' + (e.message || e));
-    btn.textContent = '📷 Изменить фото';
-  } finally {
-    setTimeout(() => { btn.disabled = false; btn.textContent = '📷 Изменить фото'; }, 1500);
-  }
+  openAvatarCrop(file);
 }
 
 async function removeAvatar() {
@@ -8580,6 +8695,7 @@ async function removeAvatar() {
     avatar: firebase.firestore.FieldValue.delete(),
     avatarUpdatedAt: Date.now()
   });
+  renderProfile();
 }
 
 // ============================================
