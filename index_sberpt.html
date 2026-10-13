@@ -2498,16 +2498,21 @@ function subscribeToUserStatus(user) {
       const data = doc.data();
       currentUserData = data; // cache user data
 
-      // Cache player name from padel_players if linked (async but sets as soon as possible)
+      // Cache player name from padel_players if linked (сначала из локального кэша players)
       if (data.playerId) {
-        (async () => {
-          try {
-            const pDoc = await db.collection("padel_players").doc(data.playerId).get();
-            if (pDoc.exists && pDoc.data().name) {
-              currentUserData.cachedPlayerName = pDoc.data().name;
-            }
-          } catch (e) {}
-        })();
+        const cached = players.find(p => p.id === data.playerId);
+        if (cached && cached.name) {
+          currentUserData.cachedPlayerName = cached.name;
+        } else {
+          (async () => {
+            try {
+              const pDoc = await db.collection("padel_players").doc(data.playerId).get();
+              if (pDoc.exists && pDoc.data().name) {
+                currentUserData.cachedPlayerName = pDoc.data().name;
+              }
+            } catch (e) {}
+          })();
+        }
       }
       // Determine role: 'superadmin' | 'admin' | 'player'
       let newRole = data.role || 'player';
@@ -2585,14 +2590,19 @@ async function checkUserStatus() {
       const data = userDoc.data();
       currentUserData = data; // cache immediately for optimistic UI
 
-      // Load player name synchronously if linked
+      // Load player name if linked (сначала из локального кэша players)
       if (data.playerId) {
-        try {
-          const pDoc = await db.collection("padel_players").doc(data.playerId).get();
-          if (pDoc.exists && pDoc.data().name) {
-            currentUserData.cachedPlayerName = pDoc.data().name;
-          }
-        } catch (e) {}
+        const cached = players.find(p => p.id === data.playerId);
+        if (cached && cached.name) {
+          currentUserData.cachedPlayerName = cached.name;
+        } else {
+          try {
+            const pDoc = await db.collection("padel_players").doc(data.playerId).get();
+            if (pDoc.exists && pDoc.data().name) {
+              currentUserData.cachedPlayerName = pDoc.data().name;
+            }
+          } catch (e) {}
+        }
       }
 
       // Determine role (preserve superadmin if email matches)
@@ -2976,13 +2986,30 @@ async function renderProfile() {
   const userEmail = (currentUser.email || '').toLowerCase().trim();
 
   try {
-    const userDoc = await db.collection("users").doc(userEmail).get();
-    if (!userDoc.exists) {
-      container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Профиль не найден</div>';
-      return;
+    // Быстрый путь: данные уже в памяти от активных realtime-подписок — рендерим мгновенно,
+    // без сетевых запросов (актуально для медленного мобильного соединения)
+    let userData = currentUserData;
+    let playerData = null;
+
+    if (userData && userData.playerId && Array.isArray(players)) {
+      const cached = players.find(p => p.id === userData.playerId);
+      if (cached) playerData = cached;
     }
 
-    const userData = userDoc.data();
+    // Fallback на сеть — только если чего-то нет в локальном кэше
+    if (!userData) {
+      const userDoc = await db.collection("users").doc(userEmail).get();
+      if (!userDoc.exists) {
+        container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Профиль не найден</div>';
+        return;
+      }
+      userData = userDoc.data();
+    }
+
+    if (userData.playerId && !playerData) {
+      const playerDoc = await db.collection("padel_players").doc(userData.playerId).get();
+      if (playerDoc.exists) playerData = { id: playerDoc.id, ...playerDoc.data() };
+    }
     const login = userData.login || userEmail.split('@')[0];
     const gender = userData.gender || '';
     const email = userData.recoveryEmail || '';
@@ -2990,11 +3017,10 @@ async function renderProfile() {
     const telegram = userData.telegram || '';
     const lundaRating = userData.lundaRating || '';
 
-    // Get linked player data
-    let playerData = null;
-    if (userData.playerId) {
+    // Get linked player data (из локального кэша players, с fallback на сеть)
+    if (userData.playerId && !playerData) {
       const playerDoc = await db.collection("padel_players").doc(userData.playerId).get();
-      if (playerDoc.exists) playerData = playerDoc.data();
+      if (playerDoc.exists) playerData = { id: playerDoc.id, ...playerDoc.data() };
     }
 
     const playerName = playerData ? playerData.name : '-';
