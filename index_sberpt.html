@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ru">
-<head>
+  <script>(function(){try{if(localStorage.getItem('sberpt-theme')==='light')document.documentElement.classList.add('light');}catch(e){}})();</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow, noarchive">
@@ -21,7 +21,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
 
   <style>
   :root {
@@ -40,7 +39,42 @@
     --bronze: #cd7f32;
     --danger: #e74c3c;
     --success: #00d084;
+    --accent-text: #000;
+    --surface-header: rgba(10,10,10,0.95);
+    --surface-nav: rgba(10,10,10,0.98);
+    --hero-grad: linear-gradient(135deg, rgba(10,10,10,0.85) 0%, rgba(10,10,10,0.65) 50%, rgba(10,10,10,0.85) 100%);
+    --hero-text: rgba(255,255,255,0.85);
+    --hero-shadow: 0 2px 12px rgba(0,0,0,0.6);
+    --hero-shadow-sm: 0 2px 8px rgba(0,0,0,0.5);
+    --accent-soft: rgba(33,160,56,0.15);
+    --accent-border: rgba(33,160,56,0.4);
+    --accent-faint: rgba(33,160,56,0.08);
   }
+
+  html.light {
+    --bg-primary: #f4f6f4;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --bg-hover: #eef2ee;
+    --accent: #1a9b4b;
+    --accent-dark: #14773b;
+    --text-primary: #141a16;
+    --text-secondary: #5a645c;
+    --text-muted: #9aa39b;
+    --border: #e2e7e2;
+    --accent-text: #ffffff;
+    --surface-header: rgba(255,255,255,0.95);
+    --surface-nav: rgba(255,255,255,0.98);
+    --hero-grad: linear-gradient(135deg, rgba(244,246,244,0.92) 0%, rgba(244,246,244,0.75) 50%, rgba(244,246,244,0.92) 100%);
+    --hero-text: rgba(20,26,22,0.8);
+    --hero-shadow: 0 2px 12px rgba(255,255,255,0.6);
+    --hero-shadow-sm: 0 2px 8px rgba(255,255,255,0.5);
+    --accent-soft: rgba(26,155,75,0.12);
+    --accent-border: rgba(26,155,75,0.4);
+    --accent-faint: rgba(26,155,75,0.08);
+  }
+
+  .theme-btn-active { background: var(--accent-soft) !important; border-color: var(--accent) !important; color: var(--accent) !important; font-weight: 600; letter-spacing: 0.5px; }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -55,7 +89,7 @@
 
   /* Header */
   .header {
-    background: rgba(10,10,10,0.95);
+    background: var(--surface-header);
     backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border);
     position: sticky;
@@ -122,7 +156,7 @@
 
   .auth-btn {
     background: var(--accent);
-    color: #000 !important;
+    color: var(--accent-text) !important;
     font-weight: 600;
     padding: 8px 18px;
     border: none;
@@ -183,7 +217,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(10,10,10,0.98);
+    background: var(--surface-nav);
     z-index: 999;
     flex-direction: column;
     padding: 20px;
@@ -208,7 +242,7 @@
     bottom: 0;
     left: 0;
     right: 0;
-    background: rgba(10,10,10,0.95);
+    background: var(--surface-header);
     backdrop-filter: blur(20px);
     border-top: 1px solid var(--border);
     z-index: 1000;
@@ -282,7 +316,7 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(10,10,10,0.85) 0%, rgba(10,10,10,0.65) 50%, rgba(10,10,10,0.85) 100%);
+    background: var(--hero-grad);
     pointer-events: none;
   }
 
@@ -293,7 +327,7 @@
     letter-spacing: 4px;
     margin-bottom: 16px;
     position: relative;
-    text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+    text-shadow: var(--hero-shadow);
   }
 
   .hero h1 span {
@@ -302,20 +336,20 @@
 
   .hero p {
     font-size: 18px;
-    color: rgba(255,255,255,0.85);
+    color: var(--hero-text);
     max-width: 600px;
     margin: 0 auto 30px;
     line-height: 1.6;
     position: relative;
-    text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    text-shadow: var(--hero-shadow-sm);
   }
 
   .hero-badge {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: rgba(33,160,56,0.15);
-    border: 1px solid rgba(33,160,56,0.4);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     color: var(--accent);
     padding: 10px 24px;
     border-radius: 100px;
@@ -393,7 +427,7 @@
 
   .btn-primary {
     background: var(--accent);
-    color: #000;
+    color: var(--accent-text);
   }
 
   .btn-primary:hover {
@@ -1411,8 +1445,8 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      background: rgba(33,160,56,0.15);
-      border: 1px solid rgba(33,160,56,0.3);
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-border);
       color: var(--accent);
       padding: 4px 10px;
       border-radius: 100px;
@@ -1443,7 +1477,7 @@
     }
 
     .player-checkbox.selected {
-      background: rgba(33,160,56,0.08);
+      background: var(--accent-faint);
     }
     .player-checkbox.selected label {
       color: var(--accent);
@@ -1710,6 +1744,19 @@
       <button class="btn btn-secondary" style="width:100%;" onclick="openChangePasswordModal()">
         Сменить пароль
       </button>
+    </div>
+  </div>
+
+  <div class="card" style="max-width: 500px; margin: 24px auto;">
+    <div class="card-header">
+      <span class="card-title">🎨 Оформление</span>
+    </div>
+    <div style="padding: 16px;">
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-secondary" id="themeBtnDark" style="flex:1;" onclick="setTheme('dark')">🌙 Классика</button>
+        <button class="btn btn-secondary" id="themeBtnLight" style="flex:1;" onclick="setTheme('light')">☀️ Светлый день</button>
+      </div>
+      <p style="font-size: 12px; color: var(--text-muted); margin-top: 10px; margin-bottom: 0;">Тема сохраняется на этом устройстве.</p>
     </div>
   </div>
 </section>
@@ -5877,7 +5924,7 @@ function renderGames() {
       } else if (isFull) {
         statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(48,209,88,0.15); color: var(--success);">🎯 Готова</span>';
       } else {
-        statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(33,160,56,0.15); color: var(--accent);">📋 Планирование</span>';
+        statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: var(--accent-soft); color: var(--accent);">📋 Планирование</span>';
       }
 
       html += `
@@ -6213,7 +6260,7 @@ function openPlannedGame(plannedGameId) {
   } else if (pg.status === 'ready') {
     statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(48,209,88,0.15); color: var(--success);">🎯 Готова</span>';
   } else {
-    statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: rgba(33,160,56,0.15); color: var(--accent);">📋 Планирование</span>';
+    statusLabel = '<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; background: var(--accent-soft); color: var(--accent);">📋 Планирование</span>';
   }
 
   const modalContent = `
@@ -9438,5 +9485,23 @@ init();
 
 <div class="mobile-scroll-spacer"></div>
 
+
+<script>
+/* ===== Тема оформления ===== */
+function getTheme() { try { return localStorage.getItem('sberpt-theme') || 'dark'; } catch (e) { return 'dark'; } }
+function setTheme(name) {
+  try { localStorage.setItem('sberpt-theme', name); } catch (e) {}
+  document.documentElement.classList.toggle('light', name === 'light');
+  updateThemeButtons();
+}
+function updateThemeButtons() {
+  var t = getTheme();
+  var bd = document.getElementById('themeBtnDark');
+  var bl = document.getElementById('themeBtnLight');
+  if (bd) bd.classList.toggle('theme-btn-active', t !== 'light');
+  if (bl) bl.classList.toggle('theme-btn-active', t === 'light');
+}
+updateThemeButtons();
+</script>
 </body>
 </html>
