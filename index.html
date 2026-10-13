@@ -21,6 +21,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
 
   <style>
   :root {
@@ -3035,7 +3036,7 @@ async function renderProfile() {
               <button class="btn btn-secondary btn-sm" id="avatarUploadBtn" onclick="document.getElementById('avatarFileInput').click()">📷 Изменить фото</button>
               ${playerData.avatar ? '<button class="btn btn-secondary btn-sm" onclick="removeAvatar()">🗑 Удалить</button>' : ''}
             </div>
-            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.5;">JPG/PNG до 10 МБ.<br>Обрезка с центровкой по кругу, сохраним квадрат 512 px.</div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.5;">JPG/PNG до 10 МБ.<br>Обрезка с центровкой по кругу. Сохраним в хорошем качестве (до 1280 px).</div>
           </div>
         </div>
         <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" onchange="onAvatarFileSelected(event)">` : '';
@@ -8543,7 +8544,7 @@ function renderAvatarHtml(p) {
 function openAvatarViewer(playerId) {
   const p = players.find(x => x.id === playerId);
   if (!p || !p.avatar) return;
-  document.getElementById('avatarViewerImg').src = p.avatar;
+  document.getElementById('avatarViewerImg').src = p.avatarFull || p.avatar;
   document.getElementById('avatarViewerCaption').textContent = p.name || '';
   const v = document.getElementById('avatarViewer');
   v.style.display = 'flex';
@@ -8666,30 +8667,47 @@ async function saveAvatarCrop() {
   const btn = document.getElementById('avatarCropSaveBtn');
   btn.disabled = true; btn.textContent = '⏳ Сохранение…';
   try {
-    // экспортируем квадрат вьюпорта в пикселях исходника → 512×512
+    // экспортируем квадрат вьюпорта в пикселях исходника; без апскейла
     const side = cropV / cropScale;
     const sx = -cropOx / cropScale, sy = -cropOy / cropScale;
-    const canvas = document.createElement('canvas');
-    canvas.width = 512; canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(cropImg, sx, sy, side, side, 0, 0, 512, 512);
-    const blob = await new Promise((res, rej) =>
-      canvas.toBlob(b => b ? res(b) : rej(new Error('браузер не смог обработать изображение')), 'image/jpeg', 0.87));
-    if (blob.size > 200 * 1024) throw new Error('даже после сжатия фото больше 200 КБ — выберите другое');
-    const dataUrl = await new Promise((res, rej) => {
+    const outFull = Math.min(1280, Math.max(1, Math.round(side)));
+    const drawInto = (size) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(cropImg, sx, sy, side, side, 0, 0, size, size);
+      return canvas;
+    };
+    // полная версия (viewer, до 1280 px) + лёгкая миниатюра (таблицы, 128 px)
+    const fullBlob = await new Promise((res, rej) =>
+      drawInto(outFull).toBlob(b => b ? res(b) : rej(new Error('браузер не смог обработать изображение')), 'image/jpeg', 0.9));
+    const thumbBlob = await new Promise((res, rej) =>
+      drawInto(128).toBlob(b => b ? res(b) : rej(new Error('браузер не смог обработать изображение')), 'image/jpeg', 0.85));
+    if (fullBlob.size > 1.5 * 1024 * 1024) throw new Error('фото получилось больше 1,5 МБ — попробуйте сильнее уменьшить масштаб');
+
+    const playerId = currentProfilePlayerId;
+    const toB64 = (blob) => new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => res(r.result);
       r.onerror = () => rej(new Error('ошибка чтения файла'));
       r.readAsDataURL(blob);
     });
-    await db.collection('padel_players').doc(currentProfilePlayerId).update({
-      avatar: dataUrl,
+    const [fullB64, thumbB64] = await Promise.all([toB64(fullBlob), toB64(thumbBlob)]);
+    // загрузка через Cloud Function (проверка прав на сервере: только владелец/админ)
+    const callable = firebase.app().functions('europe-west1').httpsCallable('manageAvatar');
+    const resp = await callable({ action: 'upload', playerId, fullBase64: fullB64, thumbBase64: thumbB64 });
+    const { fullURL, thumbURL } = resp.data;
+    await db.collection('padel_players').doc(playerId).update({
+      avatar: thumbURL,
+      avatarFull: fullURL,
       avatarUpdatedAt: Date.now()
     });
     // мгновенно подменяем фото в профиле без ожидания снапшота
+    const previewURL = URL.createObjectURL(thumbBlob);
     const holder = document.querySelector('.profile-avatar-img, .profile-avatar-placeholder');
-    if (holder) holder.outerHTML = `<img class="profile-avatar-img" src="${dataUrl}" alt="">`;
+    if (holder) holder.outerHTML = `<img class="profile-avatar-img" src="${previewURL}" alt="">`;
+    setTimeout(() => URL.revokeObjectURL(previewURL), 30000);
     closeAvatarCrop();
   } catch (e) {
     alert('Не удалось сохранить фото: ' + (e.message || e));
@@ -8717,8 +8735,14 @@ function onAvatarFileSelected(event) {
 async function removeAvatar() {
   if (!currentProfilePlayerId) return;
   if (!confirm('Удалить фото профиля?')) return;
-  await db.collection('padel_players').doc(currentProfilePlayerId).update({
+  const playerId = currentProfilePlayerId;
+  // чистим файлы в Storage через Cloud Function (могут отсутствовать — старые base64, пропускаем молча)
+  try {
+    await firebase.app().functions('europe-west1').httpsCallable('manageAvatar')({ action: 'delete', playerId });
+  } catch (e) {}
+  await db.collection('padel_players').doc(playerId).update({
     avatar: firebase.firestore.FieldValue.delete(),
+    avatarFull: firebase.firestore.FieldValue.delete(),
     avatarUpdatedAt: Date.now()
   });
   renderProfile();
