@@ -1871,6 +1871,37 @@
   </div>
 </div>
 
+<!-- Event Photo Modal: опциональное фото при завершении матча/турнира -->
+<div class="modal-overlay" id="eventPhotoModal" onclick="if(event.target===this)closeEventPhotoModal()">
+  <div class="modal" style="max-width: 420px;">
+    <div class="modal-header">
+      <span class="modal-title" id="eventPhotoModalTitle">🏁 Завершить</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeEventPhotoModal()">✕</button>
+    </div>
+    <div style="padding: 16px;">
+      <div style="width:100%; border-radius:12px; overflow:hidden; border:1px solid var(--border); background:rgba(127,127,127,0.08);">
+        <div id="eventPhotoPreviewPlaceholder" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:36px 16px; color:var(--text-muted); font-size:13px;">
+          <span style="font-size:32px;">📷</span>
+          <span>Фото не выбрано</span>
+        </div>
+        <img id="eventPhotoPreview" src="" alt="" style="display:none; width:100%; max-height:260px; object-fit:cover;">
+      </div>
+      <input type="file" id="eventPhotoInput" accept="image/*" style="display:none;" onchange="onEventPhotoSelected(event)">
+      <div style="display:flex; gap:10px; margin-top:12px;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="document.getElementById('eventPhotoInput').click()">📷 Выбрать фото</button>
+        <button class="btn btn-secondary" id="eventPhotoRemoveBtn" style="display:none; flex:0 0 auto;" onclick="clearEventPhoto()" title="Убрать фото">✕</button>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:10px; line-height:1.5;">
+        Фото опционально. Оно появится в карточке события — его увидят все участники.
+      </div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <button class="btn btn-secondary" style="flex:1;" onclick="closeEventPhotoModal()">Отмена</button>
+        <button class="btn btn-success" style="flex:1;" id="eventPhotoConfirmBtn" onclick="confirmEventPhoto()">🏁 Завершить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Login Modal -->
 <div class="modal-overlay" id="loginModal" onclick="if(event.target===this)closeLoginModal()">
   <div class="modal" style="max-width: 400px;">
@@ -3678,6 +3709,7 @@ function renderTournaments() {
             ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить">🗑️</span>` : ''}
           </div>
         </div>
+        ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
       </div>
     `;
   });
@@ -3965,6 +3997,13 @@ function openTournament(id) {
 
       html += `</div>`;
     });
+  }
+
+  // Фото события (для завершённых турниров с фото)
+  if (t.status === 'finished' && t.photo) {
+    html += `<div style="margin: 0 0 16px;" onclick="openPhotoViewer('${t.photo}', 'Фото с турнира')">
+      <img src="${t.photo}" alt="Фото с турнира" style="width:100%; max-height:420px; object-fit:contain; border-radius:12px; display:block; cursor:zoom-in; background:#000;">
+    </div>`;
   }
 
   // Winners (for finished tournaments)
@@ -5192,24 +5231,15 @@ async function finalizeTournament(tournamentId) {
     return;
   }
 
-  // Check skipPublish checkbox
+  // Check skipPublish checkbox (в детальном виде турнира)
   const skipPublishCheckbox = document.getElementById(`skipPublish-${tournamentId}`);
   const skipPublish = skipPublishCheckbox ? skipPublishCheckbox.checked : false;
 
-  if (!confirm("Завершить турнир и подвести итоги? Это действие нельзя отменить.")) return;
-  locks.finalizeTournament = true;
-
-  try {
-    await callCloudFn('finalizeTournament', { tournamentId, skipPublish });
-    showToast("Турнир завершен! Медали вручены.", "success");
-    closeModal();
-    await loadTournaments();
-    await loadPlayers();
-  } catch (e) {
-    showToast("Ошибка: " + e.message, "error");
-  } finally {
-    locks.finalizeTournament = false;
-  }
+  // Модалка завершения с опциональным фото события
+  openEventPhotoModal('tournament', tournamentId, {
+    title: '🏁 Завершить турнир и подвести итоги?',
+    skipPublish,
+  });
 }
 
 async function recalculateTournament(tournamentId) {
@@ -5902,6 +5932,7 @@ function renderGames() {
             </div>
             <div style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</div>
           </div>
+          ${g.status === 'finished' && g.photo ? `<div style="margin-top:8px; margin-right:110px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:260px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
           <div style="position:absolute; right:12px; top:0; bottom:0; display:flex; flex-direction:row; align-items:center; gap: 8px;">
             <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
             ${canEdit(g) ? `<span style="cursor:pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить">🗑️</span>` : ''}
@@ -7270,6 +7301,13 @@ function openGame(gameId) {
     </div>`;
   }
 
+  // Фото события
+  if (g.photo) {
+    html += `<div style="margin-top: 16px;" onclick="openPhotoViewer('${g.photo}', 'Фото с матча')">
+      <img src="${g.photo}" alt="Фото с матча" style="width:100%; max-height:420px; object-fit:contain; border-radius:12px; display:block; cursor:zoom-in; background:#000;">
+    </div>`;
+  }
+
   // Кнопки для админа или создателя
   if (canEdit(g) && g.status !== 'finished') {
     html += '<div style="margin-top: 20px;">';
@@ -7474,21 +7512,184 @@ function getGameDisplayOrder(g) {
 
 
 
-async function finishGame(gameId) {
-  if (locks.finishGame) return;
-  if (!confirm("Завершить игру? Это действие нельзя отменить.")) return;
-  locks.finishGame = true;
+// ============================================================
+// Фото событий (матчи/турниры) — 2026-10-22
+// Организатор при завершении может прикрепить одно фото. Клиент ресайзит
+// его в браузере (contain-fit: full 1280px + thumb 480px, JPEG) и шлёт
+// base64 в finalizeGame/finalizeTournament — дальше upload в Storage делает
+// функция. Право на фото = право на завершение (организатор/админ).
+// ============================================================
+let eventPhotoState = null; // {kind: 'game'|'tournament', id, skipPublish, file, previewUrl}
 
+function openEventPhotoModal(kind, id, opts = {}) {
+  if (locks.finishGame) return;
+  eventPhotoState = { kind, id, skipPublish: !!opts.skipPublish, file: null, previewUrl: null };
+  document.getElementById('eventPhotoModalTitle').textContent = opts.title || '🏁 Завершить';
+  document.getElementById('eventPhotoInput').value = '';
+  document.getElementById('eventPhotoPreview').src = '';
+  document.getElementById('eventPhotoPreview').style.display = 'none';
+  document.getElementById('eventPhotoPreviewPlaceholder').style.display = 'flex';
+  document.getElementById('eventPhotoRemoveBtn').style.display = 'none';
+  const btn = document.getElementById('eventPhotoConfirmBtn');
+  btn.disabled = false;
+  btn.textContent = '🏁 Завершить';
+  const m = document.getElementById('eventPhotoModal');
+  m.style.zIndex = '2001'; // поверх модалок деталей турнира/игры
+  m.classList.add('show');
+}
+
+function closeEventPhotoModal() {
+  const m = document.getElementById('eventPhotoModal');
+  m.classList.remove('show');
+  if (eventPhotoState && eventPhotoState.previewUrl) URL.revokeObjectURL(eventPhotoState.previewUrl);
+  eventPhotoState = null;
+}
+
+function onEventPhotoSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    showToast('Нужен файл изображения', 'error');
+    e.target.value = '';
+    return;
+  }
+  if (file.size > 30 * 1024 * 1024) {
+    showToast('Файл больше 30 МБ — выберите другое фото', 'error');
+    e.target.value = '';
+    return;
+  }
+  if (!eventPhotoState) return;
+  if (eventPhotoState.previewUrl) URL.revokeObjectURL(eventPhotoState.previewUrl);
+  eventPhotoState.file = file;
+  eventPhotoState.previewUrl = URL.createObjectURL(file);
+  const img = document.getElementById('eventPhotoPreview');
+  img.src = eventPhotoState.previewUrl;
+  img.style.display = 'block';
+  document.getElementById('eventPhotoPreviewPlaceholder').style.display = 'none';
+  document.getElementById('eventPhotoRemoveBtn').style.display = 'inline-flex';
+  document.getElementById('eventPhotoConfirmBtn').textContent = '🏁 Завершить с фото';
+}
+
+function clearEventPhoto() {
+  if (!eventPhotoState) return;
+  if (eventPhotoState.previewUrl) URL.revokeObjectURL(eventPhotoState.previewUrl);
+  eventPhotoState.file = null;
+  eventPhotoState.previewUrl = null;
+  document.getElementById('eventPhotoInput').value = '';
+  const img = document.getElementById('eventPhotoPreview');
+  img.src = '';
+  img.style.display = 'none';
+  document.getElementById('eventPhotoPreviewPlaceholder').style.display = 'flex';
+  document.getElementById('eventPhotoRemoveBtn').style.display = 'none';
+  document.getElementById('eventPhotoConfirmBtn').textContent = '🏁 Завершить';
+}
+
+function fileToImageEl(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('не удалось прочитать изображение')); };
+    img.src = url;
+  });
+}
+
+// contain-fit ресайз: пропорции сохраняем, вписываем в maxSide, без апскейла.
+async function makeEventPhotoDataUrl(file, maxSide, quality) {
+  const img = await fileToImageEl(file);
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  const scale = Math.min(1, maxSide / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * scale));
+  const h = Math.max(1, Math.round(ih * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
+async function confirmEventPhoto() {
+  if (!eventPhotoState || locks.finishGame) return;
+  const st = eventPhotoState;
+  const btn = document.getElementById('eventPhotoConfirmBtn');
+  locks.finishGame = true;
+  btn.disabled = true;
+  btn.textContent = '⏳ Завершение…';
   try {
-    await callCloudFn('finalizeGame', { gameId });
-    closeGameModal();
-    showToast("Игра завершена. Рейтинги обновлены.", "success");
-    await loadPlayers();
+    const payload = st.kind === 'tournament'
+      ? { tournamentId: st.id, skipPublish: !!st.skipPublish }
+      : { gameId: st.id };
+    if (st.file) {
+      btn.textContent = '⏳ Обработка фото…';
+      const [photoFull, photoThumb] = await Promise.all([
+        makeEventPhotoDataUrl(st.file, 1280, 0.85),
+        makeEventPhotoDataUrl(st.file, 480, 0.8),
+      ]);
+      // лимиты бэкенда: raw JPEG ≤900 КБ / ≤200 КБ; base64 ≈ ×4/3 + dataURL-префикс
+      if (photoFull.length > 900 * 1024 * 1.4) throw new Error('фото получилось слишком большим — выберите другое');
+      if (photoThumb.length > 200 * 1024 * 1.4) throw new Error('миниатюра слишком большая — выберите другое фото');
+      payload.photoFull = photoFull;
+      payload.photoThumb = photoThumb;
+    }
+    btn.textContent = '⏳ Завершение…';
+    if (st.kind === 'tournament') {
+      await callCloudFn('finalizeTournament', payload);
+      showToast('Турнир завершен! Медали вручены.', 'success');
+      closeModal();
+      await loadTournaments();
+      await loadPlayers();
+    } else {
+      await callCloudFn('finalizeGame', payload);
+      closeGameModal();
+      showToast('Игра завершена. Рейтинги обновлены.', 'success');
+      await loadPlayers();
+    }
+    closeEventPhotoModal();
   } catch (e) {
-    showToast("Ошибка: " + e.message, "error");
+    showToast('Ошибка: ' + e.message, 'error');
   } finally {
     locks.finishGame = false;
+    btn.disabled = false;
+    btn.textContent = st.file ? '🏁 Завершить с фото' : '🏁 Завершить';
   }
+}
+
+// Компактный блок для карточки завершённого турнира в ленте: фото + топ-3.
+function renderFinishedEventExtras(t) {
+  let h = '';
+  if (t.photo) {
+    h += `<div style="margin-top:10px;" onclick="event.stopPropagation(); openPhotoViewer('${t.photo}', '${escapeHtml(t.name || 'Турнир')}')">
+      <img src="${t.photoThumb || t.photo}" loading="lazy" alt="Фото с турнира" style="width:100%; max-height:300px; object-fit:cover; border-radius:12px; display:block; cursor:zoom-in;">
+    </div>`;
+  }
+  if (t.winners) {
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines = [];
+    for (let i = 0; i < 3; i++) {
+      const w = t.winners[i + 1];
+      if (!w) continue;
+      const ids = Array.isArray(w) ? w : [w];
+      lines.push(`<div>${medals[i]} ${escapeHtml(ids.map(pid => getPlayerNameById(pid)).join(' & '))}</div>`);
+    }
+    if (lines.length) {
+      h += `<div style="margin-top:8px; font-size:14px; font-weight:600; line-height:1.8;">${lines.join('')}</div>`;
+    }
+  }
+  return h;
+}
+
+async function finishGame(gameId) {
+  if (locks.finishGame) return;
+  const g = games.find(x => x.id === gameId);
+  if (!g) return;
+  if (g.status === 'finished') {
+    showToast("Игра уже завершена", "error");
+    return;
+  }
+  openEventPhotoModal('game', gameId, { title: '🏁 Завершить игру?' });
 }
 
 async function deleteGame(gameId) {
@@ -8611,6 +8812,18 @@ function closeAvatarViewer() {
 
 function avatarViewerEsc(e) {
   if (e.key === 'Escape') closeAvatarViewer();
+}
+
+// Универсальный просмотр фото (лайтбокс) — тот же overlay, что и для аватарок:
+// передаём URL напрямую (для фото событий, где нет playerId).
+function openPhotoViewer(url, caption) {
+  if (!url) return;
+  document.getElementById('avatarViewerImg').src = url;
+  document.getElementById('avatarViewerCaption').textContent = caption || '';
+  const v = document.getElementById('avatarViewer');
+  v.style.display = 'flex';
+  requestAnimationFrame(() => v.classList.add('open'));
+  document.addEventListener('keydown', avatarViewerEsc);
 }
 
 // ============================================
