@@ -606,6 +606,8 @@
     user-select: none;
   }
   img.player-avatar { cursor: zoom-in; }
+  /* Мини-аватарки в карточках матчей (24px, без отступа справа — отступы задаёт gap) */
+  .player-avatar-mini { width: 24px !important; height: 24px !important; min-width: 24px; margin-right: 0; font-size: 11px !important; }
 
   @media (max-width: 768px) {
     .player-avatar { width: 28px; height: 28px; margin-right: 8px; font-size: 12px; }
@@ -5921,7 +5923,7 @@ function renderGames() {
       const miniAvatar = pid => {
         const p = players.find(x => x.id === pid);
         if (!p) return '';
-        return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar" style="width:24px;height:24px;flex:none;font-size:11px;"');
+        return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar player-avatar-mini"');
       };
       const pair1Names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
       const pair2Names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
