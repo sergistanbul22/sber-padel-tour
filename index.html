@@ -5911,31 +5911,47 @@ function renderGames() {
     if (item.type === 'game') {
       const g = item.data;
       const date = g.date ? new Date(g.date).toLocaleDateString('ru-RU') : '-';
-      const statusClass = g.status === 'finished' ? 'status-finished' : 'status-active';
-      const statusText = g.status === 'finished' ? 'Завершена' : 'Идёт';
+      const isFinished = g.status === 'finished';
+      const statusClass = isFinished ? 'status-finished' : 'status-active';
+      const statusText = isFinished ? 'Завершена' : 'Идёт';
 
+      // Победившая пара идёт первой (getGameDisplayOrder сам меняет местами)
       const displayOrder = getGameDisplayOrder(g);
-      const p1names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
-      const p2names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
+      // Мини-аватарки 24px слева от ФИО (тот же renderAvatarHtml, что в рейтинге)
+      const miniAvatar = pid => {
+        const p = players.find(x => x.id === pid);
+        if (!p) return '';
+        return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar" style="width:24px;height:24px;flex:none;font-size:11px;"');
+      };
+      const pair1Names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
+      const pair2Names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
 
+      // Счёт по сетам — одной строкой, единый шрифт (+30% к текущему 14px)
       let scoreDisplay = '';
       if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
-        scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(', ');
+        scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(' · ');
       }
 
       html += `
-        <div class="card" style="position: relative; padding: 10px 12px;">
-          <div style="cursor: pointer; padding-right: 110px;" onclick="openGame('${g.id}')">
-            <div style="display:flex; align-items:center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
-              <span style="font-size: 14px; font-weight: 700; color: var(--text-primary);">${p1names} vs ${p2names}</span>
-              <span style="font-size: 14px; color: var(--accent); font-weight: 700;">${scoreDisplay || '-'}</span>
+        <div class="card" style="padding: 12px 14px;">
+          <div style="cursor: pointer;" onclick="openGame('${g.id}')">
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${(displayOrder.pair1First || []).map(miniAvatar).join('')}
+              <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${escapeHtml(pair1Names)}</div>
             </div>
-            <div style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</div>
-          </div>
-          ${g.status === 'finished' && g.photo ? `<div style="margin-top:8px; margin-right:110px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:260px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
-          <div style="position:absolute; right:12px; top:0; bottom:0; display:flex; flex-direction:row; align-items:center; gap: 8px;">
-            <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
-            ${canEdit(g) ? `<span style="cursor:pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить">🗑️</span>` : ''}
+            <div style="display:flex; align-items:center; gap:8px; margin-top: 3px;">
+              ${(displayOrder.pair2First || []).map(miniAvatar).join('')}
+              <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pair2Names)}</div>
+            </div>
+            <div style="text-align:center; margin-top:6px; font-size:18px; font-weight:700; color:var(--accent);">${scoreDisplay || '–'}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+              <span style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</span>
+              <span style="display: inline-flex; align-items: center; gap: 8px;">
+                <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
+                ${canEdit(g) ? `<span style="cursor: pointer; font-size: 16px; padding: 2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить">🗑️</span>` : ''}
+              </span>
+            </div>
+            ${isFinished && g.photo ? `<div style="margin-top: 10px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
           </div>
         </div>
       `;
