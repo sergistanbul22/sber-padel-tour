@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
-<title>Черновик карточки матча — SBER Padel Tour</title>
+<title>Черновик карточки матча v2 — SBER Padel Tour</title>
 <style>
   :root {
     --bg-primary: #0a0a0a; --bg-secondary: #111111; --bg-card: #1a1a1a; --bg-hover: #252525;
@@ -28,18 +28,18 @@
   .status-active { background: rgba(255,193,7,0.1); color: #ffc107; border: 1px solid rgba(255,193,7,0.2); }
   .status-finished { background: rgba(108,117,125,0.1); color: var(--text-muted); border: 1px solid rgba(108,117,125,0.2); }
   .sample-label { font-size: 11px; color: var(--text-muted); margin: 0 0 6px 6px; }
+  .player-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 13px; flex: none; }
 </style>
 </head>
 <body>
 <button class="theme-toggle" onclick="document.documentElement.classList.toggle('light')">🌓 Тема</button>
 <div class="draft-header">
-  <div class="draft-tag">Черновик · 22.10</div>
-  <h1>Новая карточка матча</h1>
-  <p>1) Пары — по строке, не переносятся (длинные обрезаются многоточием).<br>
-  2) Счёт по центру под парами: общий итог крупно, сеты одной строкой.<br>
-  3) Ниже строка: слева дата, справа статус + корзина.<br>
-  4) Фото — на всю ширину карточки, клик — увеличение.<br>
-  👀 Первая пара зелёным = победители.</p>
+  <div class="draft-tag">Черновик v2 · 22.10</div>
+  <h1>Карточка матча — доработка</h1>
+  <p>• Шрифты — как на сайте сейчас (пары 14/700, дата 11).<br>
+  • Счёт по сетам — одной строкой, единый шрифт 18px (+30%), по центру.<br>
+  • Слева от ФИО — аватарки 24px (клик по фото-аватарке — увеличение).<br>
+  • Первая строка зелёным = победители. Фото на всю ширину, клик — лайтбокс.</p>
 </div>
 <div id="samples"></div>
 
@@ -47,11 +47,35 @@
 // ===== Ровно тот же код карточки, что уходит в index_sberpt.html =====
 const PHOTO = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='450'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%230d3b66'/><stop offset='1' stop-color='%2306d6a0'/></linearGradient></defs><rect width='800' height='450' fill='url(%23g)'/><line x1='400' y1='0' x2='400' y2='450' stroke='white' stroke-opacity='0.35' stroke-width='6'/><circle cx='400' cy='225' r='85' fill='none' stroke='white' stroke-opacity='0.35' stroke-width='6'/><text x='400' y='240' font-size='40' text-anchor='middle' fill='white' fill-opacity='0.85'>🎾 фото с матча</text></svg>";
 
-const players = { p1:'Иванов А.', p2:'Петров С.', p3:'Сидоров М.', p4:'Козлов Д.',
-  l1:'Александр-Владимировский Иванов', l2:'Петров-Кузнецов Константин Олегович', l3:'Сидорова-Абрамян Мариам Геннадьевна', l4:'Козлов' };
+function svgAvatar(letter, bg) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><circle cx='24' cy='24' r='24' fill='${bg}'/><text x='24' y='31' font-size='20' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='white'>${letter}</text></svg>`;
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg).replace(/%2520/g,'%20');
+}
 
-function getPlayerNameById(pid) { return players[pid] || pid; }
+const players = [
+  { id:'p1', name:'Иванов А.',   avatar: svgAvatar('И','#0d6efd') },
+  { id:'p2', name:'Петров С.',   avatar: null },
+  { id:'p3', name:'Сидоров М.',  avatar: svgAvatar('С','#fd7e14') },
+  { id:'p4', name:'Козлов Д.',   avatar: null },
+  { id:'l1', name:'Александр-Владимировский Иванов', avatar: null },
+  { id:'l2', name:'Петров-Кузнецов Константин Олегович', avatar: null },
+  { id:'l3', name:'Сидорова-Абрамян Мариам Геннадьевна', avatar: null },
+  { id:'l4', name:'Козлов', avatar: null },
+];
+
+function avatarColor(name) { return '#6c757d'; }
+function getPlayerNameById(pid) { const p = players.find(x => x.id === pid); return p ? p.name : pid; }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Копия renderAvatarHtml из сайта
+function renderAvatarHtml(p) {
+  const name = escapeHtml(p.name || '?');
+  if (p.avatar) {
+    return `<img class="player-avatar" src="${p.avatar}" alt="${name}" title="${name}" loading="lazy">`;
+  }
+  const initial = escapeHtml(String(p.name || '?').trim().charAt(0).toUpperCase());
+  return `<span class="player-avatar" style="background:${avatarColor(p.name)}">${initial}</span>`;
+}
 
 function getGameDisplayOrder(g) {
   const isFinished = g.status === 'finished';
@@ -70,30 +94,39 @@ function getGameDisplayOrder(g) {
   return { pair1First: g.pair1, pair2First: g.pair2, scores1First: g.sets, isSwapped: false };
 }
 
+// Копия нового блока карточки из renderGames (item.type === 'game')
 function renderGameCard(g, date) {
   const isFinished = g.status === 'finished';
   const statusClass = isFinished ? 'status-finished' : 'status-active';
   const statusText = isFinished ? 'Завершена' : 'Идёт';
   const displayOrder = getGameDisplayOrder(g);
+  const miniAvatar = pid => {
+    const p = players.find(x => x.id === pid);
+    if (!p) return '';
+    return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar" style="width:24px;height:24px;flex:none;font-size:11px;"');
+  };
   const pair1Names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
   const pair2Names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' & ') || '?';
-  let scoreMain = '', scoreSets = '';
+  let scoreDisplay = '';
   if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
-    const t1 = displayOrder.scores1First.reduce((a, s) => a + (s.score1 || 0), 0);
-    const t2 = displayOrder.scores1First.reduce((a, s) => a + (s.score2 || 0), 0);
-    scoreMain = `${t1} : ${t2}`;
-    scoreSets = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(' · ');
+    scoreDisplay = displayOrder.scores1First.map(s => `${s.score1}:${s.score2}`).join(' · ');
   }
   return `
     <div class="card" style="padding: 12px 14px;">
       <div style="cursor: pointer;">
-        <div style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${escapeHtml(pair1Names)}</div>
-        <div style="font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">${escapeHtml(pair2Names)}</div>
-        ${scoreMain ? `<div style="text-align: center; margin-top: 8px; font-size: 21px; font-weight: 700; letter-spacing: 0.5px; color: ${isFinished ? 'var(--text-primary)' : 'var(--accent)'};">${scoreMain}${scoreSets ? ` <span style="font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--text-muted);">· ${scoreSets}</span>` : ''}</div>` : ''}
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-          <span style="font-size: 12px; color: var(--text-muted);">🎾 ${date}</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${(displayOrder.pair1First || []).map(miniAvatar).join('')}
+          <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${escapeHtml(pair1Names)}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-top: 3px;">
+          ${(displayOrder.pair2First || []).map(miniAvatar).join('')}
+          <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pair2Names)}</div>
+        </div>
+        <div style="text-align:center; margin-top:6px; font-size:18px; font-weight:700; color:var(--accent);">${scoreDisplay || '–'}</div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+          <span style="font-size: 11px; color: var(--text-muted);">🎾 ${date}</span>
           <span style="display: inline-flex; align-items: center; gap: 8px;">
-            <span class="status-badge ${statusClass}" style="font-size: 11px; padding: 3px 8px;">${statusText}</span>
+            <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 6px;">${statusText}</span>
             <span style="cursor: pointer; font-size: 16px; padding: 2px;" title="Удалить">🗑️</span>
           </span>
         </div>
@@ -103,7 +136,7 @@ function renderGameCard(g, date) {
 }
 
 const samples = [
-  { label: 'Завершена · 2 сета · с фото', g: { status:'finished', pair1:['p1','p2'], pair2:['p3','p4'], sets:[{score1:6,score2:4},{score1:6,score2:2}], photo:PHOTO }, date:'21.10.2026' },
+  { label: 'Завершена · 2 сета · с фото (у двоих аватарки)', g: { status:'finished', pair1:['p1','p2'], pair2:['p3','p4'], sets:[{score1:6,score2:4},{score1:6,score2:2}], photo:PHOTO }, date:'21.10.2026' },
   { label: 'Завершена · 3 сета · без фото · длинные ФИО', g: { status:'finished', pair1:['l1','l2'], pair2:['l3','l4'], sets:[{score1:6,score2:4},{score1:3,score2:6},{score1:7,score2:5}] }, date:'19.10.2026' },
   { label: 'Идёт · введён 1 сет', g: { status:'active', pair1:['p1','p3'], pair2:['p2','p4'], sets:[{score1:6,score2:3}] }, date:'22.10.2026' },
   { label: 'Завершена · старая игра без сетов', g: { status:'finished', pair1:['p3','p2'], pair2:['p1','p4'], sets:[] }, date:'02.09.2026' },
