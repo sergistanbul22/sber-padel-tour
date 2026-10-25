@@ -395,6 +395,28 @@
     margin-bottom: 20px;
   }
 
+  /* Веб-версия: карточки игр/турниров/тренировок в два столбца (от 900px),
+     мобильная версия остаётся одним столбцом */
+  @media (min-width: 900px) {
+    #gamesList,
+    #tournamentsList,
+    #trainingsList {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+    #gamesList > .card,
+    #tournamentsList > .card,
+    #trainingsList > .card {
+      margin-bottom: 0;
+    }
+    #gamesList > .empty-state,
+    #tournamentsList > .empty-state,
+    #trainingsList > .empty-state {
+      grid-column: 1 / -1;
+    }
+  }
+
   .card-header {
     display: flex;
     align-items: center;
