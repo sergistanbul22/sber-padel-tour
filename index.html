@@ -630,6 +630,8 @@
   img.player-avatar { cursor: zoom-in; }
   /* Мини-аватарки в карточках матчей (24px, без отступа справа — отступы задаёт gap) */
   .player-avatar-mini { width: 24px !important; height: 24px !important; min-width: 24px; margin-right: 0; font-size: 11px !important; }
+  /* Группа мини-аватарок пары в карточке матча: минимальный зазор между аватарками (отступ до ФИО задаёт gap строки) */
+  .match-avatars { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
 
   @media (max-width: 768px) {
     .player-avatar { width: 28px; height: 28px; margin-right: 8px; font-size: 12px; }
@@ -5960,11 +5962,11 @@ function renderGames() {
         <div class="card" style="padding: 12px 14px;">
           <div style="cursor: pointer;" onclick="openGame('${g.id}')">
             <div style="display:flex; align-items:center; gap:8px;">
-              ${(displayOrder.pair1First || []).map(miniAvatar).join('')}
+              <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
               <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${escapeHtml(pair1Names)}</div>
             </div>
             <div style="display:flex; align-items:center; gap:8px; margin-top: 3px;">
-              ${(displayOrder.pair2First || []).map(miniAvatar).join('')}
+              <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
               <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pair2Names)}</div>
             </div>
             <div style="text-align:center; margin-top:6px; font-size:18px; font-weight:700; color:var(--accent);">${scoreDisplay || '–'}</div>
