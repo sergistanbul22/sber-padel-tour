@@ -2344,6 +2344,12 @@ function cfFriendlyError(e) {
 async function callCloudFn(name, data) {
   try {
     const res = await cfCallable(name)(data || {});
+    // рейтинговые функции меняют игроков — сбрасываем кэш, чтобы
+    // инициатор сразу видел свежий рейтинг, не дожидаясь poll-цикла
+    try {
+      localStorage.removeItem(PUB_CACHE_PREFIX + 'players');
+    } catch (e) {}
+    loadPublicPlayers();
     return res.data;
   } catch (e) {
     throw new Error(cfFriendlyError(e));
@@ -2589,8 +2595,6 @@ function startPublicCacheRevalidator() {
   const refresh = () => {
     if (document.hidden) return;
     loadPublicPlayers();
-    loadPublicTournaments();
-    loadPublicTrainings();
   };
   setInterval(refresh, 60000);
   window.addEventListener('focus', refresh);
@@ -2601,7 +2605,11 @@ function subscribeToPlayers() {
 }
 
 function subscribeToTournaments() {
-  loadPublicTournaments();
+  db.collection("padel_tournaments").orderBy("createdAt", "desc").onSnapshot(snapshot => {
+    applyTournamentsRows(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+  }, err => {
+    console.error("Tournaments subscription error:", err);
+  });
 }
 
 function handleAuthStateChanged(user) {
@@ -5853,7 +5861,11 @@ async function loadMoreGames() {
 }
 
 function subscribeToTrainings() {
-  loadPublicTrainings();
+  db.collection("padel_trainings").onSnapshot(snapshot => {
+    applyTrainingsRows(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+  }, err => {
+    console.error("Trainings subscription error:", err);
+  });
 }
 
 function subscribeToPlannedGames() {
