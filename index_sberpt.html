@@ -2370,6 +2370,7 @@ function init() {
     subscribeToGameCounters();
     subscribeToTrainings();
     subscribeToPlannedGames();
+    startPublicCacheRevalidator();
     // subscribeToTrainingMeta() moved to handleAuthStateChanged (requires auth)
 
     auth.onAuthStateChanged(handleAuthStateChanged);
@@ -2430,44 +2431,177 @@ function canEdit(item) {
   return isCreatorEmail(item.createdBy);
 }
 
-function subscribeToPlayers() {
-  db.collection("padel_players").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    players = snapshot.docs.map(d => {
-      const data = d.data();
-      // Migration: if eventsPlayed not set, initialize from tournamentsPlayed
-      if (data.eventsPlayed === undefined && data.tournamentsPlayed !== undefined) {
-        data.eventsPlayed = data.tournamentsPlayed;
-      }
-      // Migration: initialize mu/sigma for TrueSkill
-      if (data.mu === undefined || data.sigma === undefined) {
-        data.mu = 25;
-        data.sigma = 25 / 3;
-      }
-      return { id: d.id, ...data };
-    });
-    renderPlayers();
-    updateStats();
-    renderPlayerSelect();
-  }, err => {
-    console.error("Players subscription error:", err);
+// ============================================
+// PUBLIC DATA CACHE (players / tournaments / trainings)
+// Зачем: каждый просмотр страницы = полная выборка коллекций (~200 чтений
+// Firestore на визит). Кэш в localStorage + версия из meta/ratings (её бампают
+// Cloud Functions при любом изменении рейтингов) резко режут нагрузку:
+//   - hard TTL 10 мин — граница свежести при ручных правках (в обход функций);
+//   - версия meta/ratings — инвалидация после finalize/recalculate/delete;
+//   - max age 24 ч — предохранитель; в офлайне кэш отдаётся всегда.
+// padel_games / padel_planned_games / padel_counters остаются живыми
+// снапшотами — их пишут сами пользователи, объём у них маленький.
+// ============================================
+const PUB_CACHE_PREFIX = 'sberpt_cache_v1_';
+const PUB_TTL_HARD_MS = 10 * 60 * 1000;        // гарантированная свежесть
+const PUB_META_POLL_MS = 5 * 60 * 1000;        // как часто перечитываем версию
+const PUB_MAX_AGE_MS = 24 * 60 * 60 * 1000;    // абсолютный предел жизни кэша
+let pubMeta = { version: null, fetchedAt: 0 };
+
+// Firestore Timestamp -> маркер (чтобы JSON-кэш не терял типы)
+function pubSerialize(v) {
+  if (v === null || v === undefined) return v;
+  if (typeof v === 'object') {
+    if (typeof v.toDate === 'function' && typeof v.seconds === 'number') {
+      return { __fsTs: v.seconds * 1000 + Math.round((v.nanoseconds || 0) / 1e6) };
+    }
+    if (Array.isArray(v)) return v.map(pubSerialize);
+    const o = {};
+    for (const k in v) o[k] = pubSerialize(v[k]);
+    return o;
+  }
+  return v;
+}
+function pubRevive(v) {
+  if (v === null || v === undefined) return v;
+  if (typeof v === 'object') {
+    if (!Array.isArray(v) && typeof v.__fsTs === 'number') {
+      const ms = v.__fsTs;
+      return new firebase.firestore.Timestamp(Math.floor(ms / 1000), Math.round((ms % 1000) * 1e6));
+    }
+    if (Array.isArray(v)) return v.map(pubRevive);
+    const o = {};
+    for (const k in v) o[k] = pubRevive(v[k]);
+    return o;
+  }
+  return v;
+}
+function pubCacheLoad(key) {
+  try {
+    const raw = localStorage.getItem(PUB_CACHE_PREFIX + key);
+    if (!raw) return null;
+    const item = JSON.parse(raw);
+    return (item && item.ts && Array.isArray(item.rows)) ? item : null;
+  } catch (e) { return null; }
+}
+function pubCacheSave(key, rows, version) {
+  try {
+    localStorage.setItem(PUB_CACHE_PREFIX + key, JSON.stringify({
+      ts: Date.now(), version: version, rows: pubSerialize(rows)
+    }));
+  } catch (e) { /* квота localStorage — кэш не критичен */ }
+}
+function pubCacheTouch(key, item) {
+  item.ts = Date.now();
+  try { localStorage.setItem(PUB_CACHE_PREFIX + key, JSON.stringify(item)); } catch (e) {}
+}
+async function pubFetchMeta(force) {
+  if (!force && Date.now() - pubMeta.fetchedAt < PUB_META_POLL_MS) return pubMeta.version;
+  try {
+    const d = await db.collection('meta').doc('ratings').get();
+    pubMeta.version = d.exists ? (d.data().version || 0) : 0;
+  } catch (e) {
+    console.warn('meta/ratings read failed:', e && e.message);
+    pubMeta.version = null; // офлайн/нет доступа — решаем по hard TTL
+  }
+  pubMeta.fetchedAt = Date.now();
+  return pubMeta.version;
+}
+async function pubLoadCollection(key, queryFn, applyFn) {
+  const item = pubCacheLoad(key);
+  const now = Date.now();
+  if (item) {
+    const tooOld = (now - item.ts) > PUB_MAX_AGE_MS;
+    if (!tooOld) {
+      const v = await pubFetchMeta(false);
+      if (v === null || v === item.version) { applyFn(pubRevive(item.rows)); return; }
+      // версия изменилась -> уходим на полную выборку ниже
+    }
+  }
+  try {
+    const snap = await queryFn().get();
+    const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const v = await pubFetchMeta(false);
+    pubCacheSave(key, rows, v);
+    applyFn(rows);
+  } catch (e) {
+    console.error('pubLoadCollection ' + key + ':', e);
+    if (item) applyFn(pubRevive(item.rows)); // сеть упала — отдаём кэш
+  }
+}
+
+function applyPlayersRows(rows) {
+  players = rows.map(data => {
+    if (data.eventsPlayed === undefined && data.tournamentsPlayed !== undefined) {
+      data.eventsPlayed = data.tournamentsPlayed;
+    }
+    if (data.mu === undefined || data.sigma === undefined) {
+      data.mu = 25;
+      data.sigma = 25 / 3;
+    }
+    return data;
   });
+  renderPlayers();
+  updateStats();
+  renderPlayerSelect();
+}
+function applyTournamentsRows(rows) {
+  tournaments = rows.map(data => {
+    if (data.scheduleData) {
+      try { data.schedule = JSON.parse(data.scheduleData); } catch (e) { data.schedule = []; }
+    }
+    return data;
+  });
+  renderTournaments();
+  updateStats();
+  recalcTournamentCounts();
+}
+function applyTrainingsRows(rows) {
+  trainings = rows;
+  renderTrainings();
+  // Deep-link после загрузки тренировок (мобильные/Telegram-браузеры)
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('training')) {
+    checkUrlHash();
+  } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
+    checkUrlHash();
+  }
+}
+function loadPublicPlayers() {
+  return pubLoadCollection('players',
+    () => db.collection("padel_players").orderBy("createdAt", "desc"),
+    applyPlayersRows);
+}
+function loadPublicTournaments() {
+  return pubLoadCollection('tournaments',
+    () => db.collection("padel_tournaments").orderBy("createdAt", "desc"),
+    applyTournamentsRows);
+}
+function loadPublicTrainings() {
+  return pubLoadCollection('trainings',
+    () => db.collection("padel_trainings"),
+    applyTrainingsRows);
+}
+let pubCacheRevalidatorStarted = false;
+function startPublicCacheRevalidator() {
+  if (pubCacheRevalidatorStarted) return;
+  pubCacheRevalidatorStarted = true;
+  const refresh = () => {
+    if (document.hidden) return;
+    loadPublicPlayers();
+    loadPublicTournaments();
+    loadPublicTrainings();
+  };
+  setInterval(refresh, 60000);
+  window.addEventListener('focus', refresh);
+}
+
+function subscribeToPlayers() {
+  loadPublicPlayers();
 }
 
 function subscribeToTournaments() {
-  db.collection("padel_tournaments").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-    tournaments = snapshot.docs.map(d => {
-      const data = d.data();
-      if (data.scheduleData) {
-        try { data.schedule = JSON.parse(data.scheduleData); } catch(e) { data.schedule = []; }
-      }
-      return { id: d.id, ...data };
-    });
-    renderTournaments();
-    updateStats();
-    recalcTournamentCounts();
-  }, err => {
-    console.error("Tournaments subscription error:", err);
-  });
+  loadPublicTournaments();
 }
 
 function handleAuthStateChanged(user) {
@@ -5719,21 +5853,7 @@ async function loadMoreGames() {
 }
 
 function subscribeToTrainings() {
-  db.collection("padel_trainings").onSnapshot(snapshot => {
-    trainings = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderTrainings();
-    // Try deep-link after trainings load (for mobile/Telegram browsers)
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('training')) {
-      console.log('[DEEP-LINK] Data loaded, checking query param...');
-      checkUrlHash();
-    } else if (window.location.hash && window.location.hash.startsWith('#training=')) {
-      console.log('[DEEP-LINK] Data loaded, checking hash...');
-      checkUrlHash();
-    }
-  }, err => {
-    console.error("Trainings subscription error:", err);
-  });
+  loadPublicTrainings();
 }
 
 function subscribeToPlannedGames() {
