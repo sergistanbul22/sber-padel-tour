@@ -1762,6 +1762,13 @@
     </div>
   </div>
 
+  <div class="card" style="max-width: 500px; margin: 24px auto; display:none;" id="h2hProfileCard">
+    <div class="card-header">
+      <span class="card-title">⚔️ Личные встречи</span>
+    </div>
+    <div id="h2hProfileContent" style="padding: 16px;"></div>
+  </div>
+
   <div class="card" style="max-width: 500px; margin: 24px auto;">
     <div class="card-header">
       <span class="card-title">🔒 Безопасность</span>
@@ -3348,6 +3355,7 @@ async function renderProfile() {
     console.error("Profile render error:", e);
     container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Ошибка загрузки профиля</div>';
   }
+  renderProfileH2h(currentProfilePlayerId);
 }
 
 async function saveProfile() {
@@ -4233,6 +4241,11 @@ function openTournament(id) {
     html += '</div>';
   }
 
+  // Кнопка «Детализация» — только завершённый американо с раскладкой и счётом
+  if (t.status === 'finished' && t.type !== 'roundrobin' && t.schedule && t.schedule.length > 0 && t.scores && t.playerIds && t.playerIds.length > 0) {
+    html += `<button class="btn btn-secondary" style="width:100%;margin-top:20px;" onclick="toggleTournamentDetail('${t.id}')">📊 Детализация</button><div id="tournamentDetailPanel"></div>`;
+  }
+
   // Admin/creator actions for finished tournaments
   if (canEdit(t) && t.status === 'finished') {
     html += `<div style="margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap;">
@@ -4412,6 +4425,339 @@ async function saveScheduleChanges(tournamentId) {
     showToast("Ошибка сохранения: " + e.message, "error");
   }
 }
+
+
+// ========== ДЕТАЛИЗАЦИЯ ТУРНИРА + ЛИЧНЫЕ ВСТРЕЧИ (2026-11-05) ==========
+// Чистый SVG без библиотек; цвета — через CSS-переменные темы.
+// Позиция после раунда: сумма очков, тай-брейк по рейтингу до турнира.
+const tournamentDetailSel = {}; // tid -> playerId
+
+function americanoScoreOf(t, r, m, team) {
+  const v = t.scores ? t.scores[`${r}_${m}_${team}`] : undefined;
+  return typeof v === 'number' ? v : 0;
+}
+
+// Матчи игрока по раундам (раскладка + счёт американо)
+function americanoPlayerStory(t, pid) {
+  const pids = t.playerIds || [];
+  const idx = pids.indexOf(pid);
+  const schedule = t.schedule || [];
+  if (idx < 0 || !schedule.length) return [];
+  const story = [];
+  let total = 0;
+  schedule.forEach((matches, r) => {
+    (matches || []).forEach((mt, m) => {
+      const in1 = (mt.team1 || []).includes(idx);
+      const in2 = (mt.team2 || []).includes(idx);
+      if (!in1 && !in2) return;
+      const myTeam = in1 ? mt.team1 : mt.team2;
+      const oppTeam = in1 ? mt.team2 : mt.team1;
+      const myScore = in1 ? americanoScoreOf(t, r, m, 0) : americanoScoreOf(t, r, m, 1);
+      const oppScore = in1 ? americanoScoreOf(t, r, m, 1) : americanoScoreOf(t, r, m, 0);
+      total += myScore;
+      story.push({
+        round: r + 1,
+        court: mt.court,
+        partner: myTeam.map(i => pids[i]).filter(id => id && id !== pid),
+        opps: oppTeam.map(i => pids[i]).filter(Boolean),
+        myScore, oppScore,
+        win: myScore > oppScore,
+        totalAfter: total
+      });
+    });
+  });
+  return story;
+}
+
+// Позиции участников после раунда roundIdx (0-based)
+function americanoPositions(t, roundIdx) {
+  const pids = t.playerIds || [];
+  const before = t.ratingsBefore || {};
+  const ratingOf = pid => {
+    if (before[pid] && typeof before[pid].rating === 'number') return before[pid].rating;
+    const p = players.find(x => x.id === pid);
+    return p && typeof p.rating === 'number' ? p.rating : 0;
+  };
+  const totals = pids.map(pid => {
+    const pts = americanoPlayerStory(t, pid)
+      .filter(g => g.round <= roundIdx + 1)
+      .reduce((a, g) => a + g.myScore, 0);
+    return { pid, pts };
+  });
+  totals.sort((a, b) => (b.pts - a.pts) || (ratingOf(b.pid) - ratingOf(a.pid)));
+  const pos = {};
+  totals.forEach((x, i) => { pos[x.pid] = i + 1; });
+  return pos;
+}
+
+function toggleTournamentDetail(tid) {
+  const panel = document.getElementById('tournamentDetailPanel');
+  if (!panel) return;
+  if (panel.innerHTML) { panel.innerHTML = ''; return; }
+  const t = tournaments.find(x => x.id === tid);
+  if (!t) return;
+  if (!tournamentDetailSel[tid]) {
+    const lb = (t.leaderboard || []).map(e => e.playerId);
+    tournamentDetailSel[tid] =
+      (currentUserData && currentUserData.playerId && (t.playerIds || []).includes(currentUserData.playerId))
+        ? currentUserData.playerId
+        : (lb[0] || (t.playerIds || [])[0]);
+  }
+  renderTournamentDetail(tid);
+}
+
+function selectTournamentDetailPlayer(tid, pid) {
+  tournamentDetailSel[tid] = pid;
+  renderTournamentDetail(tid);
+}
+
+function renderTournamentDetail(tid) {
+  const t = tournaments.find(x => x.id === tid);
+  const panel = document.getElementById('tournamentDetailPanel');
+  if (!t || !panel) return;
+  const pid = tournamentDetailSel[tid];
+  const story = americanoPlayerStory(t, pid);
+  if (!story.length) { panel.innerHTML = ''; return; }
+
+  const lb = (t.leaderboard || []).map(e => e.playerId);
+  const place = lb.indexOf(pid) + 1;
+  const totalPts = story.reduce((a, g) => a + g.myScore, 0);
+  const wins = story.filter(g => g.win).length;
+  const rb = (t.ratingsBefore || {})[pid];
+  const ra = (t.ratingsAfter || {})[pid];
+  const dRating = (rb && ra && typeof rb.rating === 'number' && typeof ra.rating === 'number')
+    ? Math.round(ra.rating - rb.rating) : null;
+  const dColor = dRating === null ? '' : `color:${dRating >= 0 ? 'var(--success)' : 'var(--danger)'};`;
+
+  const chips = (t.playerIds || []).map(id => {
+    const active = id === pid ? 'background:var(--accent-light);border-color:var(--accent);' : '';
+    return `<span style="display:inline-block;padding:4px 10px;border-radius:14px;border:1px solid var(--border);background:var(--bg-secondary);font-size:12px;cursor:pointer;margin:0 4px 4px 0;${active}" onclick="selectTournamentDetailPlayer('${tid}','${id}')">${escapeHtml(getPlayerNameById(id))}</span>`;
+  }).join('');
+
+  const statBox = (k, v, color) => `<div style="flex:1;min-width:78px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+    <div style="font-size:11px;color:var(--text-muted);">${k}</div>
+    <div style="font-size:17px;font-weight:700;${color || ''}">${v}</div></div>`;
+
+  const rows = story.map(g => `<tr>
+    <td>${g.round}</td>
+    <td>${escapeHtml(g.court || '—')}</td>
+    <td>${g.partner.map(p => escapeHtml(getPlayerNameById(p))).join(', ') || '—'}</td>
+    <td>${g.opps.map(p => escapeHtml(getPlayerNameById(p))).join(', ')}</td>
+    <td>${g.myScore} : ${g.oppScore}</td>
+    <td>+${g.myScore}</td>
+    <td style="font-weight:700;color:${g.win ? 'var(--success)' : 'var(--danger)'}">${g.win ? 'победа' : 'поражение'}</td>
+  </tr>`).join('');
+
+  panel.innerHTML = `
+    <div style="margin-top:12px;border:1px solid var(--border);border-radius:12px;padding:14px;background:var(--bg-secondary);">
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px;">📊 Персональная статистика</div>
+      <div style="margin-bottom:10px;">${chips}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+        ${statBox('Место', place > 0 ? place : '—')}
+        ${statBox('Очки', totalPts)}
+        ${statBox('Побед', wins + ' из ' + story.length)}
+        ${statBox('Δ рейтинга', dRating === null ? '—' : ((dRating >= 0 ? '+' : '') + dRating), dColor)}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 4px;">Очки за матч (зелёный — победа пары, красный — поражение)</div>
+      ${svgDetailBars(story)}
+      <div style="font-size:12px;color:var(--text-muted);margin:12px 0 4px;">Набор очков и позиция после каждого раунда</div>
+      ${svgDetailLines(t, pid, story)}
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin-top:2px;flex-wrap:wrap;">
+        <span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--accent);margin-right:5px;"></i>сумма очков</span>
+        <span><i style="display:inline-block;width:10px;height:3px;background:#e6a817;margin-right:5px;vertical-align:middle;"></i>позиция (правая шкала)</span>
+      </div>
+      <div class="table-scroll" style="margin-top:10px;"><table class="data-table" style="font-size:13px;">
+        <thead><tr><th>#</th><th>Корт</th><th>Партнёр</th><th>Соперники</th><th>Счёт</th><th>Очки</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </div>`;
+}
+
+// Бары: очки за матч по раундам
+function svgDetailBars(story) {
+  const W = 640, H = 150, padL = 30, padB = 24, padT = 12;
+  const maxV = Math.max(24, ...story.map(g => g.myScore)) * 1.1;
+  const n = Math.max(story.length, 1);
+  const bw = (W - padL - 10) / n;
+  let out = `<line x1="${padL}" y1="${H - padB}" x2="${W}" y2="${H - padB}" stroke="var(--border)"/>`;
+  [0, 12, 24].forEach(v => {
+    if (v > maxV) return;
+    const y = H - padB - (v / maxV) * (H - padB - padT);
+    out += `<line x1="${padL}" y1="${y}" x2="${W - 6}" y2="${y}" stroke="var(--border)" stroke-opacity="0.45"/>`;
+    out += `<text x="${padL - 6}" y="${y + 4}" fill="var(--text-muted)" font-size="10" text-anchor="end">${v}</text>`;
+  });
+  story.forEach((g, i) => {
+    const x = padL + i * bw + bw * 0.22;
+    const h = (g.myScore / maxV) * (H - padB - padT);
+    const y = H - padB - h;
+    out += `<rect x="${x}" y="${y}" width="${bw * 0.56}" height="${Math.max(h, 1)}" rx="3" style="fill:${g.win ? 'var(--success)' : 'var(--danger)'}"><title>Раунд ${g.round}: +${g.myScore} (партнёр: ${g.partner.map(p => getPlayerNameById(p)).join(', ') || '—'})</title></rect>`;
+    out += `<text x="${x + bw * 0.28}" y="${y - 4}" font-size="11" font-weight="600" fill="var(--text)" text-anchor="middle">${g.myScore}</text>`;
+    out += `<text x="${x + bw * 0.28}" y="${H - 8}" fill="var(--text-muted)" font-size="10" text-anchor="middle">Р${g.round}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block;">${out}</svg>`;
+}
+
+// Линии: кумулятивные очки + позиция (правая шкала)
+function svgDetailLines(t, pid, story) {
+  const W = 640, H = 180, padL = 34, padR = 36, padB = 24, padT = 12;
+  const n = story.length;
+  if (!n) return '';
+  const cum = story.map(g => g.totalAfter);
+  const poss = story.map(g => americanoPositions(t, g.round - 1)[pid] || 1);
+  const playersCount = (t.playerIds || []).length || 8;
+  const maxPts = (Math.max(...cum) * 1.15) || 1;
+  const x = i => padL + (i + 0.5) * ((W - padL - padR) / n);
+  const yP = v => H - padB - (v / maxPts) * (H - padB - padT);
+  const yPos = v => padT + ((v - 1) / Math.max(playersCount - 1, 1)) * (H - padB - padT);
+  let out = '';
+  [0, Math.round(maxPts / 2), Math.round(maxPts)].forEach(v => {
+    const y = yP(v);
+    out += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-opacity="0.45"/>`;
+    out += `<text x="${padL - 6}" y="${y + 4}" fill="var(--text-muted)" font-size="10" text-anchor="end">${v}</text>`;
+  });
+  for (let p = 1; p <= playersCount; p++) {
+    const y = yPos(p);
+    out += `<text x="${W - padR + 8}" y="${y + 4}" fill="var(--text-muted)" font-size="10">${p}°</text>`;
+    if (p === 1) out += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e6a817" stroke-opacity="0.3" stroke-dasharray="3 3"/>`;
+  }
+  let dPts = `M ${x(0)} ${yP(cum[0])}`;
+  for (let i = 1; i < n; i++) dPts += ` L ${x(i)} ${yP(cum[i - 1])} L ${x(i)} ${yP(cum[i])}`;
+  out += `<path d="${dPts}" fill="none" style="stroke:var(--accent)" stroke-width="2.5"/>`;
+  cum.forEach((v, i) => { out += `<circle cx="${x(i)}" cy="${yP(v)}" r="3.5" style="fill:var(--accent)"/>`; });
+  let dPos = `M ${x(0)} ${yPos(poss[0])}`;
+  for (let i = 1; i < n; i++) dPos += ` L ${x(i)} ${yPos(poss[i])}`;
+  out += `<path d="${dPos}" fill="none" stroke="#e6a817" stroke-width="2" stroke-dasharray="5 3"/>`;
+  poss.forEach((v, i) => {
+    out += `<circle cx="${x(i)}" cy="${yPos(v)}" r="3.5" fill="#e6a817"/>`;
+    out += `<text x="${x(i)}" y="${yPos(v) - 8}" fill="#e6a817" font-size="10" font-weight="700" text-anchor="middle">${v}</text>`;
+  });
+  story.forEach((g, i) => { out += `<text x="${x(i)}" y="${H - 8}" fill="var(--text-muted)" font-size="10" text-anchor="middle">Р${g.round}</text>`; });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block;">${out}</svg>`;
+}
+
+// ---- Личные встречи: агрегат по всем завершённым турнирам и играм (считается на клиенте) ----
+let h2hGamesAll = null;
+let h2hGamesFetchedAt = 0;
+
+async function ensureH2hGames() {
+  if (h2hGamesAll && (Date.now() - h2hGamesFetchedAt) < 5 * 60 * 1000) return;
+  const snap = await db.collection('padel_games').where('status', '==', 'finished').get();
+  h2hGamesAll = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  h2hGamesFetchedAt = Date.now();
+}
+
+function computePlayerH2H(pid) {
+  const agg = {};
+  const add = (oppIds, win, pf, pa) => {
+    (oppIds || []).forEach(oid => {
+      if (!oid || oid === pid) return;
+      if (!agg[oid]) agg[oid] = { g: 0, w: 0, pf: 0, pa: 0 };
+      agg[oid].g++;
+      if (win) agg[oid].w++;
+      agg[oid].pf += pf;
+      agg[oid].pa += pa;
+    });
+  };
+  // Завершённые турниры американо (roundrobin не трогаем — формат парный, схема другая)
+  (tournaments || []).forEach(t => {
+    if (t.status !== 'finished' || t.type === 'roundrobin') return;
+    const pids = t.playerIds || [];
+    const idx = pids.indexOf(pid);
+    if (idx < 0 || !t.schedule || !t.scores) return;
+    t.schedule.forEach((matches, r) => {
+      (matches || []).forEach((mt, m) => {
+        const in1 = (mt.team1 || []).includes(idx);
+        const in2 = (mt.team2 || []).includes(idx);
+        if (!in1 && !in2) return;
+        const myS = in1 ? americanoScoreOf(t, r, m, 0) : americanoScoreOf(t, r, m, 1);
+        const oppS = in1 ? americanoScoreOf(t, r, m, 1) : americanoScoreOf(t, r, m, 0);
+        const oppTeam = in1 ? mt.team2 : mt.team1;
+        add(oppTeam.map(i => pids[i]), myS > oppS, myS, oppS);
+      });
+    });
+  });
+  // Отдельные завершённые игры
+  (h2hGamesAll || []).forEach(g => {
+    const in1 = (g.pair1 || []).includes(pid);
+    const in2 = (g.pair2 || []).includes(pid);
+    if (!in1 && !in2) return;
+    const sets = g.sets || [];
+    const mySets = sets.map(s => (in1 ? (s.score1 || 0) : (s.score2 || 0)));
+    const oppSets = sets.map(s => (in1 ? (s.score2 || 0) : (s.score1 || 0)));
+    const pf = mySets.reduce((a, b) => a + b, 0);
+    const pa = oppSets.reduce((a, b) => a + b, 0);
+    const myWon = mySets.filter((v, i) => v > oppSets[i]).length;
+    const oppWon = oppSets.filter((v, i) => v > mySets[i]).length;
+    add(in1 ? g.pair2 : g.pair1, myWon > oppWon, pf, pa);
+  });
+  return Object.entries(agg).map(([oid, a]) => ({
+    oid, g: a.g, w: a.w, l: a.g - a.w,
+    winrate: a.g ? a.w / a.g : 0,
+    pf: a.pf, pa: a.pa, diff: a.pf - a.pa
+  })).sort((a, b) => a.winrate - b.winrate || b.g - a.g || a.diff - b.diff);
+}
+
+async function renderProfileH2h(pid) {
+  const card = document.getElementById('h2hProfileCard');
+  const content = document.getElementById('h2hProfileContent');
+  if (!card || !content) return;
+  if (!pid) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
+  try {
+    await ensureH2hGames();
+    const rows = computePlayerH2H(pid);
+    if (!rows.length) {
+      content.innerHTML = '<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">Пока нет завершённых встреч</div>';
+      return;
+    }
+    const totalG = rows.reduce((a, r) => a + r.g, 0);
+    const totalW = rows.reduce((a, r) => a + r.w, 0);
+    const eligible = rows.filter(r => r.g >= 2);
+    const hardest = eligible.length ? eligible[0] : null;
+
+    const statBox = (k, v, color) => `<div style="flex:1;min-width:74px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+      <div style="font-size:11px;color:var(--text-muted);">${k}</div>
+      <div style="font-size:17px;font-weight:700;${color || ''}">${v}</div></div>`;
+
+    const bars = eligible.slice(0, 8).map(r => `
+      <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;">
+        <div style="width:46%;text-align:right;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(getPlayerNameById(r.oid))} <span style="color:var(--text-muted);opacity:0.7;">· ${r.g}</span></div>
+        <div style="flex:1;height:13px;background:var(--bg-secondary);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:${Math.round(r.winrate * 100)}%;background:${r.oid === (hardest && hardest.oid) ? 'var(--danger)' : (r.winrate >= 0.5 ? 'var(--success)' : '#e6a817')};border-radius:4px;"></div>
+        </div>
+        <div style="width:40px;font-weight:600;">${Math.round(r.winrate * 100)}%</div>
+      </div>`).join('');
+
+    const tableRows = rows.slice(0, 15).map(r => `
+      <tr style="${hardest && r.oid === hardest.oid ? 'background:rgba(231,76,60,0.14);' : ''}">
+        <td>${escapeHtml(getPlayerNameById(r.oid))}${hardest && r.oid === hardest.oid ? '<span style="display:inline-block;background:var(--danger);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;margin-left:6px;">😈 сложнейший</span>' : ''}</td>
+        <td>${r.g}</td>
+        <td style="color:var(--success);font-weight:700;">${r.w}</td>
+        <td style="color:var(--danger);">${r.l}</td>
+        <td><b>${Math.round(r.winrate * 100)}%</b></td>
+        <td>${r.pf} : ${r.pa}</td>
+        <td style="color:${r.diff >= 0 ? 'var(--success)' : 'var(--danger)'};">${r.diff >= 0 ? '+' : ''}${r.diff}</td>
+      </tr>`).join('');
+
+    content.innerHTML = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        ${statBox('Встреч', totalG)}
+        ${statBox('Побед', totalW, 'color:var(--success);')}
+        ${statBox('Поражений', totalG - totalW, 'color:var(--danger);')}
+        ${statBox('Соперников', rows.length)}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin:10px 0 4px;">Винрейт по соперникам (мин. 2 встречи)</div>
+      ${bars || '<div style="font-size:12px;color:var(--text-muted);">Нет соперников с двумя и более встречами</div>'}
+      <div class="table-scroll" style="margin-top:10px;"><table class="data-table" style="font-size:13px;">
+        <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
+        <tbody>${tableRows}</tbody></table></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">«Сложнейший соперник» — минимальный винрейт при минимум 2 встречах. Учитываются завершённые турниры (американо) и отдельные игры.</div>`;
+  } catch (e) {
+    console.error('H2H render error:', e);
+    content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику встреч</div>';
+  }
+}
+// ========== КОНЕЦ: ДЕТАЛИЗАЦИЯ ТУРНИРА + ЛИЧНЫЕ ВСТРЕЧИ ==========
 
 function getPlayerNameById(id) {
   const p = players.find(x => x.id === id);
