@@ -4728,7 +4728,7 @@ async function renderProfileH2h(pid) {
         <div style="width:40px;font-weight:600;">${Math.round(r.winrate * 100)}%</div>
       </div>`).join('');
 
-    const tableRows = rows.slice(0, 15).map(r => `
+    const tableRows = rows.map(r => `
       <tr style="${hardest && r.oid === hardest.oid ? 'background:rgba(231,76,60,0.14);' : ''}">
         <td>${escapeHtml(getPlayerNameById(r.oid))}${hardest && r.oid === hardest.oid ? '<span style="display:inline-block;background:var(--danger);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;margin-left:6px;">😈 сложнейший</span>' : ''}</td>
         <td>${r.g}</td>
