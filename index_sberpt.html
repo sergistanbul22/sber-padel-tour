@@ -2524,12 +2524,16 @@ async function pubLoadCollection(key, queryFn, applyFn) {
   const item = pubCacheLoad(key);
   const now = Date.now();
   if (item) {
+    // Stale-while-revalidate: показываем кэш СРАЗУ — даже старше 24 ч.
+    // Устаревший список игроков на секунды лучше «0 ИГРОКОВ»;
+    // свежие данные заменят его по готовности фоновой выборки.
+    applyFn(pubRevive(item.rows));
     const tooOld = (now - item.ts) > PUB_MAX_AGE_MS;
     if (!tooOld) {
       const v = await pubFetchMeta(false);
-      if (v === null || v === item.version) { applyFn(pubRevive(item.rows)); return; }
-      // версия изменилась -> уходим на полную выборку ниже
+      if (v === null || v === item.version) return; // кэш актуален, выборка не нужна
     }
+    // кэш устарел -> фоновая выборка ниже, applyFn вызовется повторно
   }
   try {
     const snap = await queryFn().get();
@@ -2539,7 +2543,7 @@ async function pubLoadCollection(key, queryFn, applyFn) {
     applyFn(rows);
   } catch (e) {
     console.error('pubLoadCollection ' + key + ':', e);
-    if (item) applyFn(pubRevive(item.rows)); // сеть упала — отдаём кэш
+    // сеть упала: кэш уже показан выше, новичкам без кэша отобразить нечего
   }
 }
 
