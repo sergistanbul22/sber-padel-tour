@@ -1805,8 +1805,7 @@
     <div style="margin-top: 4px; color: var(--text-muted); font-size: 12px;">Команда работает только для супер-администратора через Telegram-бота @SberPadelBot</div>
   </div>
   
-  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 09.11.2026/3</div>
-  <div id="cacheDebugLine" style="text-align:right; font-size:11px; color:var(--text-muted); margin-bottom:8px;">кэш: — | meta: — | выборка: — | применено: —</div>
+  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 09.11.2026/4 (без кэша)</div>
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header" style="justify-content: space-between;">
@@ -2203,7 +2202,7 @@ const FIREBASE_CONFIG = {
 // ============================================
 // Super admin credentials removed - now checked via Firestore role field
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "09.11.2026/3";
+const SITE_VERSION = "09.11.2026/4 (без кэша)";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -2352,12 +2351,7 @@ function cfFriendlyError(e) {
 async function callCloudFn(name, data) {
   try {
     const res = await cfCallable(name)(data || {});
-    // рейтинговые функции меняют игроков — сбрасываем кэш, чтобы
-    // инициатор сразу видел свежий рейтинг, не дожидаясь poll-цикла
-    try {
-      localStorage.removeItem(PUB_CACHE_PREFIX + 'players');
-    } catch (e) {}
-    loadPublicPlayers();
+    // Свежесть данных обеспечивает живой onSnapshot-подписчик.
     return res.data;
   } catch (e) {
     throw new Error(cfFriendlyError(e));
@@ -2384,7 +2378,6 @@ function init() {
     subscribeToGameCounters();
     subscribeToTrainings();
     subscribeToPlannedGames();
-    startPublicCacheRevalidator();
     // subscribeToTrainingMeta() moved to handleAuthStateChanged (requires auth)
 
     auth.onAuthStateChanged(handleAuthStateChanged);
@@ -2443,125 +2436,10 @@ function canEdit(item) {
 }
 
 // ============================================
-// PUBLIC DATA CACHE (players / tournaments / trainings)
-// Зачем: каждый просмотр страницы = полная выборка коллекций (~200 чтений
-// Firestore на визит). Кэш в localStorage + версия из meta/ratings (её бампают
-// Cloud Functions при любом изменении рейтингов) резко режут нагрузку:
-//   - hard TTL 10 мин — граница свежести при ручных правках (в обход функций);
-//   - версия meta/ratings — инвалидация после finalize/recalculate/delete;
-//   - max age 24 ч — предохранитель; в офлайне кэш отдаётся всегда.
-// padel_games / padel_planned_games / padel_counters остаются живыми
-// снапшотами — их пишут сами пользователи, объём у них маленький.
+// ПУБЛИЧНЫЕ ДАННЫЕ — живые подписки onSnapshot (откат кэша 09.11.2026):
+// игроки/турниры/тренировки грузятся стримами, свежесть мгновенная.
 // ============================================
-const PUB_CACHE_PREFIX = 'sberpt_cache_v1_';
-const PUB_TTL_HARD_MS = 10 * 60 * 1000;        // гарантированная свежесть
-const PUB_META_POLL_MS = 5 * 60 * 1000;        // как часто перечитываем версию
-const PUB_MAX_AGE_MS = 24 * 60 * 60 * 1000;    // абсолютный предел жизни кэша
-let pubMeta = { version: null, fetchedAt: 0 };
 
-// Firestore Timestamp -> маркер (чтобы JSON-кэш не терял типы)
-function pubSerialize(v) {
-  if (v === null || v === undefined) return v;
-  if (typeof v === 'object') {
-    if (typeof v.toDate === 'function' && typeof v.seconds === 'number') {
-      return { __fsTs: v.seconds * 1000 + Math.round((v.nanoseconds || 0) / 1e6) };
-    }
-    if (Array.isArray(v)) return v.map(pubSerialize);
-    const o = {};
-    for (const k in v) o[k] = pubSerialize(v[k]);
-    return o;
-  }
-  return v;
-}
-function pubRevive(v) {
-  if (v === null || v === undefined) return v;
-  if (typeof v === 'object') {
-    if (!Array.isArray(v) && typeof v.__fsTs === 'number') {
-      const ms = v.__fsTs;
-      return new firebase.firestore.Timestamp(Math.floor(ms / 1000), Math.round((ms % 1000) * 1e6));
-    }
-    if (Array.isArray(v)) return v.map(pubRevive);
-    const o = {};
-    for (const k in v) o[k] = pubRevive(v[k]);
-    return o;
-  }
-  return v;
-}
-function pubCacheLoad(key) {
-  try {
-    const raw = localStorage.getItem(PUB_CACHE_PREFIX + key);
-    if (!raw) return null;
-    const item = JSON.parse(raw);
-    return (item && item.ts && Array.isArray(item.rows)) ? item : null;
-  } catch (e) { return null; }
-}
-function pubCacheSave(key, rows, version) {
-  try {
-    localStorage.setItem(PUB_CACHE_PREFIX + key, JSON.stringify({
-      ts: Date.now(), version: version, rows: pubSerialize(rows)
-    }));
-  } catch (e) { /* квота localStorage — кэш не критичен */ }
-}
-function pubCacheTouch(key, item) {
-  item.ts = Date.now();
-  try { localStorage.setItem(PUB_CACHE_PREFIX + key, JSON.stringify(item)); } catch (e) {}
-}
-async function pubFetchMeta(force) {
-  if (!force && Date.now() - pubMeta.fetchedAt < PUB_META_POLL_MS) return pubMeta.version;
-  try {
-    const d = await db.collection('meta').doc('ratings').get();
-    pubMeta.version = d.exists ? (d.data().version || 0) : 0;
-  } catch (e) {
-    console.warn('meta/ratings read failed:', e && e.message);
-    pubMeta.version = null; // офлайн/нет доступа — решаем по hard TTL
-  }
-  pubMeta.fetchedAt = Date.now();
-  return pubMeta.version;
-}
-async function pubLoadCollection(key, queryFn, applyFn) {
-  const item = pubCacheLoad(key);
-  const now = Date.now();
-  if (item) {
-    // Stale-while-revalidate: показываем кэш СРАЗУ — даже старше 24 ч.
-    // Устаревший список игроков на секунды лучше «0 ИГРОКОВ»;
-    // свежие данные заменят его по готовности фоновой выборки.
-    applyFn(pubRevive(item.rows));
-    PUB_DEBUG.applied = item.rows.length + ' (кэш)';
-    PUB_DEBUG.cache = item.rows.length + ' строк, v' + item.version + ', возраст ' + Math.round((now - item.ts) / 60000) + ' мин';
-    const tooOld = (now - item.ts) > PUB_MAX_AGE_MS;
-    if (!tooOld) {
-      const v = await pubFetchMeta(false);
-      PUB_DEBUG.meta = (v === null) ? 'ОШИБКА ЧТЕНИЯ' : ('v' + v);
-      if (v === null || v === item.version) { renderPubDebug(); return; } // кэш актуален, выборка не нужна
-    } else {
-      PUB_DEBUG.meta = 'кэш > 24ч — meta пропускаем';
-    }
-    // кэш устарел -> фоновая выборка ниже, applyFn вызовется повторно
-  } else {
-    PUB_DEBUG.cache = 'нет';
-  }
-  try {
-    const snap = await queryFn().get();
-    const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const v = await pubFetchMeta(false);
-    pubCacheSave(key, rows, v);
-    applyFn(rows);
-    PUB_DEBUG.fetch = rows.length + ' строк OK';
-    PUB_DEBUG.applied = rows.length + ' (свежие)';
-  } catch (e) {
-    console.error('pubLoadCollection ' + key + ':', e);
-    PUB_DEBUG.fetch = 'ОШИБКА: ' + (e && e.message ? e.message : e);
-    // сеть упала: кэш уже показан выше, новичкам без кэша отобразить нечего
-  }
-  renderPubDebug();
-}
-const PUB_DEBUG = { cache: '—', meta: '—', fetch: '—', applied: '—' };
-function renderPubDebug() {
-  const el = document.getElementById('cacheDebugLine');
-  if (el) el.textContent = 'кэш: ' + PUB_DEBUG.cache + ' | meta: ' + PUB_DEBUG.meta + ' | выборка: ' + PUB_DEBUG.fetch + ' | применено: ' + PUB_DEBUG.applied;
-}
-
-function applyPlayersRows(rows) {
   players = rows.map(data => {
     if (data.eventsPlayed === undefined && data.tournamentsPlayed !== undefined) {
       data.eventsPlayed = data.tournamentsPlayed;
@@ -2598,35 +2476,13 @@ function applyTrainingsRows(rows) {
     checkUrlHash();
   }
 }
-function loadPublicPlayers() {
-  return pubLoadCollection('players',
-    () => db.collection("padel_players").orderBy("createdAt", "desc"),
-    applyPlayersRows);
-}
-function loadPublicTournaments() {
-  return pubLoadCollection('tournaments',
-    () => db.collection("padel_tournaments").orderBy("createdAt", "desc"),
-    applyTournamentsRows);
-}
-function loadPublicTrainings() {
-  return pubLoadCollection('trainings',
-    () => db.collection("padel_trainings"),
-    applyTrainingsRows);
-}
-let pubCacheRevalidatorStarted = false;
-function startPublicCacheRevalidator() {
-  if (pubCacheRevalidatorStarted) return;
-  pubCacheRevalidatorStarted = true;
-  const refresh = () => {
-    if (document.hidden) return;
-    loadPublicPlayers();
-  };
-  setInterval(refresh, 60000);
-  window.addEventListener('focus', refresh);
-}
-
 function subscribeToPlayers() {
-  loadPublicPlayers();
+  // Откат 09.11.2026: живой стрим вместо кэша — данные обновляются мгновенно.
+  db.collection("padel_players").orderBy("createdAt", "desc").onSnapshot(snapshot => {
+    applyPlayersRows(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+  }, err => {
+    console.error("Players subscription error:", err);
+  });
 }
 
 function subscribeToTournaments() {
