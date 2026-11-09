@@ -1805,7 +1805,8 @@
     <div style="margin-top: 4px; color: var(--text-muted); font-size: 12px;">Команда работает только для супер-администратора через Telegram-бота @SberPadelBot</div>
   </div>
   
-  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 09.11.2026/2</div>
+  <div style="text-align:right; font-size:12px; color:var(--text-muted); margin-bottom:8px;">Версия сайта: 09.11.2026/3</div>
+  <div id="cacheDebugLine" style="text-align:right; font-size:11px; color:var(--text-muted); margin-bottom:8px;">кэш: — | meta: — | выборка: — | применено: —</div>
 
   <div class="card" style="margin-top: 24px;">
     <div class="card-header" style="justify-content: space-between;">
@@ -2202,7 +2203,7 @@ const FIREBASE_CONFIG = {
 // ============================================
 // Super admin credentials removed - now checked via Firestore role field
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "09.11.2026/2";
+const SITE_VERSION = "09.11.2026/3";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -2454,7 +2455,7 @@ function canEdit(item) {
 // ============================================
 const PUB_CACHE_PREFIX = 'sberpt_cache_v1_';
 const PUB_TTL_HARD_MS = 10 * 60 * 1000;        // гарантированная свежесть
-const PUB_META_POLL_MS = 60 * 1000;             // как часто перечитываем версию
+const PUB_META_POLL_MS = 5 * 60 * 1000;        // как часто перечитываем версию
 const PUB_MAX_AGE_MS = 24 * 60 * 60 * 1000;    // абсолютный предел жизни кэша
 let pubMeta = { version: null, fetchedAt: 0 };
 
@@ -2525,12 +2526,19 @@ async function pubLoadCollection(key, queryFn, applyFn) {
     // Устаревший список игроков на секунды лучше «0 ИГРОКОВ»;
     // свежие данные заменят его по готовности фоновой выборки.
     applyFn(pubRevive(item.rows));
+    PUB_DEBUG.applied = item.rows.length + ' (кэш)';
+    PUB_DEBUG.cache = item.rows.length + ' строк, v' + item.version + ', возраст ' + Math.round((now - item.ts) / 60000) + ' мин';
     const tooOld = (now - item.ts) > PUB_MAX_AGE_MS;
     if (!tooOld) {
       const v = await pubFetchMeta(false);
-      if (v === null || v === item.version) return; // кэш актуален, выборка не нужна
+      PUB_DEBUG.meta = (v === null) ? 'ОШИБКА ЧТЕНИЯ' : ('v' + v);
+      if (v === null || v === item.version) { renderPubDebug(); return; } // кэш актуален, выборка не нужна
+    } else {
+      PUB_DEBUG.meta = 'кэш > 24ч — meta пропускаем';
     }
     // кэш устарел -> фоновая выборка ниже, applyFn вызовется повторно
+  } else {
+    PUB_DEBUG.cache = 'нет';
   }
   try {
     const snap = await queryFn().get();
@@ -2538,10 +2546,19 @@ async function pubLoadCollection(key, queryFn, applyFn) {
     const v = await pubFetchMeta(false);
     pubCacheSave(key, rows, v);
     applyFn(rows);
+    PUB_DEBUG.fetch = rows.length + ' строк OK';
+    PUB_DEBUG.applied = rows.length + ' (свежие)';
   } catch (e) {
     console.error('pubLoadCollection ' + key + ':', e);
+    PUB_DEBUG.fetch = 'ОШИБКА: ' + (e && e.message ? e.message : e);
     // сеть упала: кэш уже показан выше, новичкам без кэша отобразить нечего
   }
+  renderPubDebug();
+}
+const PUB_DEBUG = { cache: '—', meta: '—', fetch: '—', applied: '—' };
+function renderPubDebug() {
+  const el = document.getElementById('cacheDebugLine');
+  if (el) el.textContent = 'кэш: ' + PUB_DEBUG.cache + ' | meta: ' + PUB_DEBUG.meta + ' | выборка: ' + PUB_DEBUG.fetch + ' | применено: ' + PUB_DEBUG.applied;
 }
 
 function applyPlayersRows(rows) {
