@@ -1,42 +1,21 @@
-const CACHE_NAME = 'sberpadel-v1';
-const urlsToCache = [
-  '/sber-padel-tour/',
-  '/sber-padel-tour/sber-padel-tour.html'
-];
-
+// Отключение legacy service worker (09.11.2026).
+// Августовский sw.js кэшировал оболочку приложения cache-first, из-за чего
+// часть устройств неделями получала старую версию сайта. Этот файл — финал:
+// при первом же заходе SW снимает регистрацию с себя и чистит все свои кэши,
+// после чего сайт работает как обычная страница (HTTP-кэш max-age=600).
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
-      .catch(err => console.log('[SW] Cache install error:', err))
-  );
-  self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames
-          .filter(name => name !== CACHE_NAME)
-          .map(name => caches.delete(name))
-      );
-    })
+    Promise.all([
+      self.registration.unregister(),
+      caches.keys().then(names => Promise.all(names.map(n => caches.delete(n))))
+    ]).then(() => self.clients.matchAll())
+      .then(clients => clients.forEach(c => c.navigate(c.url)))
   );
-  self.clients.claim();
 });
 
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request)
-      .then(response => {
-        if (response) return response;
-        return fetch(event.request).catch(() => {
-          // Если оффлайн и запрос к странице — показываем кэш
-          if (event.request.mode === 'navigate') {
-            return caches.match('/sber-padel-tour/');
-          }
-        });
-      })
-  );
-});
+// Пока SW жив (до перезахода), ничего не перехватываем — прозрачный проход.
+self.addEventListener('fetch', () => {});
