@@ -2440,6 +2440,7 @@ function canEdit(item) {
 // игроки/турниры/тренировки грузятся стримами, свежесть мгновенная.
 // ============================================
 
+function applyPlayersRows(rows) {
   players = rows.map(data => {
     if (data.eventsPlayed === undefined && data.tournamentsPlayed !== undefined) {
       data.eventsPlayed = data.tournamentsPlayed;
