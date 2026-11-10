@@ -2202,7 +2202,7 @@ const FIREBASE_CONFIG = {
 // ============================================
 // Super admin credentials removed - now checked via Firestore role field
 const SUPER_ADMIN_EMAILS = ["6585875box@sberpadel.local", "6585875box@gmail.com"];
-const SITE_VERSION = "09.11.2026/4 (без кэша)";
+const SITE_VERSION = "10.11.2026";
 
 function isSuperAdminEmail(email) {
   const e = (email || '').toLowerCase().trim();
@@ -8578,9 +8578,9 @@ function openTraining(trainingId) {
   const applications = t.applications || [];
   const alreadyApplied = applications.some(a => a.playerId === userEmail || a.playerId === currentUserData?.playerId);
 
-  // Applications section for closed training
+  // Секция заявок: закрытые тренировки, либо где есть заявки, либо для организатора/админа
   let applicationsHtml = '';
-  if (isClosed) {
+  if (isClosed || applications.length > 0 || isOrganizerOrAdmin) {
     const appsList = applications.length > 0
       ? applications.map((app, idx) => {
           const canConfirm = isOrganizerOrAdmin && !isFull;
@@ -8623,7 +8623,8 @@ function openTraining(trainingId) {
       actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openLoginModal()">Войдите, чтобы подать заявку</button>`;
     }
   } else {
-    // Open training logic (original)
+    // Open training logic — с 10.11.2026 прямая запись в слот только для админа;
+    // игроки подают заявку (правила Firestore padel_trainings так же требуют)
     if (isAdmin) {
       let adminBtns = '';
       if (alreadyBooked) {
@@ -8634,10 +8635,12 @@ function openTraining(trainingId) {
       actionBtn = adminBtns;
     } else if (alreadyBooked) {
       actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="cancelTrainingBooking('${trainingId}', ${mySlotIndex})">✕ Отменить запись</button>`;
-    } else if (canBook) {
-      actionBtn = `<button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="bookTrainingSlot('${trainingId}')">📝 Записаться</button>`;
+    } else if (alreadyApplied) {
+      actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="cancelTrainingApplication('${trainingId}')">✕ Отменить заявку</button>`;
+    } else if (currentUser) {
+      actionBtn = `<button class="btn btn-primary" style="width: 100%; margin-top: 12px;" onclick="applyForTraining('${trainingId}')">📝 Подать заявку</button>`;
     } else if (!currentUser) {
-      actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openLoginModal()">Войдите, чтобы записаться</button>`;
+      actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" onclick="openLoginModal()">Войдите, чтобы подать заявку</button>`;
     } else {
       actionBtn = `<button class="btn btn-secondary" style="width: 100%; margin-top: 12px;" disabled>Все места заняты</button>`;
     }
