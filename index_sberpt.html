@@ -2528,6 +2528,21 @@ function applyTournamentsRows(rows) {
     }
     return data;
   });
+  // Хронологическая сортировка ленты: идущие → предстоящие (ранние выше) → завершённые (свежие выше).
+  // Порядок создания турниров не влияет на отображение.
+  tournaments.sort((a, b) => {
+    const rank = { active: 0, upcoming: 1, finished: 2 };
+    const ra = rank[a.status] !== undefined ? rank[a.status] : 1; // неизвестные статусы — как предстоящие
+    const rb = rank[b.status] !== undefined ? rank[b.status] : 1;
+    if (ra !== rb) return ra - rb;
+    const da = Date.parse(a.date), db = Date.parse(b.date);
+    if (ra === 2) {
+      // завершённые: недавние выше; без даты — в самый низ блока
+      return (isNaN(db) ? -Infinity : db) - (isNaN(da) ? -Infinity : da);
+    }
+    // идущие/предстоящие: ранние выше; без даты — ниже датированных
+    return (isNaN(da) ? Infinity : da) - (isNaN(db) ? Infinity : db);
+  });
   renderTournaments();
   updateStats();
   recalcTournamentCounts();
