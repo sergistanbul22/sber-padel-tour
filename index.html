@@ -933,6 +933,9 @@
     display: flex;
   }
 
+  /* crop-модалка поверх остальных (в т.ч. регистрации) */
+  #avatarCropModal { z-index: 2100; }
+
   .modal {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -2040,6 +2043,18 @@
         </select>
       </div>
       <div class="form-group">
+        <label class="form-label">Фото профиля <span style="color:var(--danger);">*</span> <span style="color:var(--text-muted);font-size:12px;">(будет видно другим игрокам)</span></label>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span id="regAvatarPlaceholder" class="profile-avatar-placeholder" style="background:#9aa7b5; width:56px; height:56px; font-size:20px;">📷</span>
+          <img id="regAvatarPreview" alt="" style="display:none; width:56px; height:56px; border-radius:50%; object-fit:cover;">
+          <div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('regAvatarInput').click()">📷 Выбрать фото</button>
+            <div id="regAvatarStatus" style="font-size:12px; color:var(--text-muted); margin-top:4px;">Фото не выбрано — обязательно</div>
+          </div>
+        </div>
+        <input type="file" id="regAvatarInput" accept="image/*" style="display:none;" onchange="onRegAvatarSelected(event)">
+      </div>
+      <div class="form-group">
         <label class="form-label">Пароль</label>
         <input type="password" class="form-input" id="regPassword" placeholder="••••••••">
       </div>
@@ -2903,6 +2918,14 @@ function closeLoginModal() {
 function openRegisterModal() {
   document.getElementById('registerModal').classList.add('show');
   document.getElementById('loginModal').classList.remove('show');
+  // сброс состояния обязательного фото
+  regAvatarB64 = null;
+  regCropMode = false;
+  const ph = document.getElementById('regAvatarPlaceholder');
+  const pv = document.getElementById('regAvatarPreview');
+  if (pv && ph) { pv.style.display = 'none'; pv.src = ''; ph.style.display = 'inline-flex'; }
+  const st = document.getElementById('regAvatarStatus');
+  if (st) { st.textContent = 'Фото не выбрано — обязательно'; st.style.color = 'var(--text-muted)'; }
 }
 
 function closeRegisterModal() {
@@ -2977,6 +3000,12 @@ async function registerUser() {
     return;
   }
 
+  if (!regAvatarB64) {
+    showToast("Добавьте фото профиля — оно обязательно для регистрации", "error");
+    if (btn) { btn.disabled = false; btn.textContent = 'Зарегистрироваться'; }
+    return;
+  }
+
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRe.test(emailRaw)) {
     showToast("Введите корректный email", "error");
@@ -3034,6 +3063,7 @@ async function registerUser() {
   const email = emailRaw;
   // login — информационное поле для совместимости (админка, старые профили)
   const login = emailRaw.split('@')[0];
+  let createdPlayerId = null;
 
   try {
     await auth.createUserWithEmailAndPassword(email, password);
@@ -3067,6 +3097,7 @@ async function registerUser() {
         eventsPlayed: 0,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+      createdPlayerId = playerRef.id;
 
       // 3. Link player to user
       await db.collection("users").doc(email).update({
@@ -3079,6 +3110,23 @@ async function registerUser() {
       console.error("Firestore write error:", dbErr);
       showToast("Предупреждение: профиль создан, но не сохранён в базе. Нужно настроить права Firestore.", "error");
     }
+
+    // 4. Загрузка обязательного фото профиля (base64 подготовлены в crop-модалке)
+    if (createdPlayerId && regAvatarB64) {
+      try {
+        const callable = firebase.app().functions('europe-west1').httpsCallable('manageAvatar');
+        const resp = await callable({ action: 'upload', playerId: createdPlayerId, fullBase64: regAvatarB64.full, thumbBase64: regAvatarB64.thumb });
+        await db.collection('padel_players').doc(createdPlayerId).update({
+          avatar: resp.data.thumbURL,
+          avatarFull: resp.data.fullURL,
+          avatarUpdatedAt: Date.now()
+        });
+      } catch (avatarErr) {
+        console.error("Avatar upload error:", avatarErr);
+        showToast("Регистрация прошла, но фото не загрузилось — добавьте его в профиле", "error");
+      }
+    }
+    regAvatarB64 = null;
 
     closeRegisterModal();
     // Clear warning on close
@@ -9362,6 +9410,17 @@ function openPhotoViewer(url, caption) {
 // Обрезка и центровка аватара (круглый гид, как в Telegram)
 // ============================================
 let cropImg = null, cropUrl = null, cropScale = 1, cropOx = 0, cropOy = 0, cropV = 320, cropDragging = false, cropLast = null;
+// Обязательное фото в регистрации: regCropMode — обрезка вызвана из формы регистрации,
+// regAvatarB64 — готовые base64 (full/thumb), которые грузятся после создания игрока.
+let regCropMode = false, regAvatarB64 = null;
+
+function onRegAvatarSelected(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  regCropMode = true;
+  openAvatarCrop(file);
+}
 
 function openAvatarCrop(file) {
   if (!file || !file.type || !file.type.startsWith('image/')) {
@@ -9455,7 +9514,7 @@ function cropSliderChanged(e) {
 }
 
 async function saveAvatarCrop() {
-  if (!cropImg || !currentProfilePlayerId) return;
+  if (!cropImg) return;
   const btn = document.getElementById('avatarCropSaveBtn');
   btn.disabled = true; btn.textContent = '⏳ Сохранение…';
   try {
@@ -9486,6 +9545,19 @@ async function saveAvatarCrop() {
       r.readAsDataURL(blob);
     });
     const [fullB64, thumbB64] = await Promise.all([toB64(fullBlob), toB64(thumbBlob)]);
+    if (regCropMode) {
+      // регистрация: фото обработано — сохраняем, загрузка будет после создания игрока
+      regAvatarB64 = { full: fullB64, thumb: thumbB64 };
+      regCropMode = false;
+      const ph = document.getElementById('regAvatarPlaceholder');
+      const pv = document.getElementById('regAvatarPreview');
+      if (pv && ph) { pv.src = thumbB64; pv.style.display = 'block'; ph.style.display = 'none'; }
+      const st = document.getElementById('regAvatarStatus');
+      if (st) { st.textContent = 'Фото готово ✓'; st.style.color = '#2e9e5b'; }
+      closeAvatarCrop();
+      return;
+    }
+    if (!currentProfilePlayerId) { closeAvatarCrop(); return; }
     // загрузка через Cloud Function (проверка прав на сервере: только владелец/админ)
     const callable = firebase.app().functions('europe-west1').httpsCallable('manageAvatar');
     const resp = await callable({ action: 'upload', playerId, fullBase64: fullB64, thumbBase64: thumbB64 });
@@ -9510,6 +9582,7 @@ async function saveAvatarCrop() {
 
 function closeAvatarCrop() {
   document.getElementById('avatarCropModal').classList.remove('show');
+  regCropMode = false;
   if (cropUrl) { URL.revokeObjectURL(cropUrl); cropUrl = null; }
   cropImg = null;
 }
