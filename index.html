@@ -3218,25 +3218,36 @@ function updateUI() {
     const userEmail = (currentUser.email || '').toLowerCase().trim();
     db.collection("users").doc(userEmail).get().then(doc => {
       let displayName = userEmail;
-      let avatarData = null;
+      let playerId = null;
       if (doc.exists) {
         const data = doc.data();
         displayName = (data.firstName || '') + ' ' + (data.lastName || '');
         if (displayName.trim() === '') displayName = data.login || userEmail;
-        avatarData = data.avatar || null;
+        playerId = data.playerId || null;
       }
       // Обновляем UI с именем
       const nameSpan = document.querySelector('.user-name');
       if (nameSpan) nameSpan.textContent = displayName;
-      // Аватар в шапке (клик — профиль)
-      const avatarBtn = document.getElementById('headerAvatarBtn');
-      if (avatarBtn) {
-        if (avatarData) {
-          avatarBtn.innerHTML = `<img class="header-avatar-img" src="${avatarData}" alt="">`;
+      // Аватар в шапке (клик — профиль): фото хранится в padel_players/{playerId}.avatar
+      const applyHeaderAvatar = (avatarUrl) => {
+        const avatarBtn = document.getElementById('headerAvatarBtn');
+        if (!avatarBtn) return;
+        if (avatarUrl) {
+          avatarBtn.innerHTML = `<img class="header-avatar-img" src="${avatarUrl}" alt="">`;
         } else {
           const initial = escapeHtml(String(displayName || '?').trim().charAt(0).toUpperCase());
           avatarBtn.innerHTML = `<span class="header-avatar-placeholder" style="background:${avatarColor(displayName)}">${initial}</span>`;
         }
+      };
+      const cached = playerId && Array.isArray(players) ? players.find(p => p.id === playerId) : null;
+      if (cached) {
+        applyHeaderAvatar(cached.avatar || null);
+      } else if (playerId) {
+        db.collection("padel_players").doc(playerId).get().then(pdoc => {
+          applyHeaderAvatar(pdoc.exists ? (pdoc.data().avatar || null) : null);
+        }).catch(() => applyHeaderAvatar(null));
+      } else {
+        applyHeaderAvatar(null);
       }
     });
 
