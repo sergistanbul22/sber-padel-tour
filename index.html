@@ -466,6 +466,10 @@
     font-weight: 700;
   }
 
+  .tournament-card-title {
+    font-size: 16px;
+  }
+
   /* Buttons */
   .btn {
     padding: 10px 20px;
@@ -4003,9 +4007,8 @@ function renderTournaments() {
       <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="cursor: pointer; flex: 1;" onclick="openTournament('${t.id}')">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-              <span class="card-title">${escapeHtml(t.name)}</span>
-              <span class="status-badge ${statusClass}">${statusText}</span>
+            <div style="margin-bottom: 4px;">
+              <span class="card-title tournament-card-title">${escapeHtml(t.name)}</span>
             </div>
             <div style="font-size: 13px; color: var(--text-muted);">
               <svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} · <svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}${t.comment ? ' · <svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) : ''} · <svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${totalSlots} игроков · ${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка`}
@@ -4018,6 +4021,9 @@ function renderTournaments() {
           </div>
         </div>
         ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
+        <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+          <span class="status-badge ${statusClass}">${statusText}</span>
+        </div>
       </div>
     `;
   });
@@ -8976,9 +8982,15 @@ function startTournamentFromTraining(trainingId) {
   closeModal();
   openCreateTournamentModal();
 
-  // Название: Турнир — <дата тренировки>
-  const dateStr = formatTrainingDate(t);
-  document.getElementById('tournamentName').value = `Турнир — ${dateStr}`;
+  // Название: <Формат> • <Чт 20.10>
+  const d = t.date ? new Date(t.date + 'T00:00:00') : null;
+  const weekdaysShort = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+  const dateShort = d
+    ? `${weekdaysShort[d.getDay()]} ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`
+    : '';
+  const typeVal = document.getElementById('tournamentType')?.value || 'americano';
+  const typeName = typeVal === 'roundrobin' ? 'Раунд-робин' : 'Американо';
+  document.getElementById('tournamentName').value = dateShort ? `${typeName} • ${dateShort}` : typeName;
 
   // Реквизиты из карточки тренировки
   if (t.date) document.getElementById('tournamentDate').value = t.date;
