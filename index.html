@@ -192,6 +192,41 @@
     color: var(--text-secondary);
   }
 
+  .header-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.2s;
+  }
+
+  .header-avatar:hover { transform: scale(1.06); }
+
+  .header-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .header-avatar-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+  }
+
   @media (max-width: 768px) {
     .user-name {
       display: none;
@@ -1591,20 +1626,8 @@
     <div class="user-info" id="userInfo">
       <span style="color:var(--text-muted);font-size:13px;">Загрузка...</span>
     </div>
-    <button class="mobile-menu-btn" onclick="toggleMobileMenu()"><svg class="li"><use href="#i-menu"/></svg></button>
   </div>
 </header>
-
-<!-- Mobile Nav -->
-<div class="mobile-nav" id="mobileNav">
-  <button class="nav-btn active" onclick="showSection('home'); toggleMobileMenu();">Главная</button>
-  <button class="nav-btn" onclick="showSection('players'); toggleMobileMenu();">Игроки</button>
-  <button class="nav-btn" onclick="showSection('tournaments'); toggleMobileMenu();">Турниры</button>
-  <button class="nav-btn" onclick="showSection('games'); toggleMobileMenu();">Игры</button>
-  <button class="nav-btn" onclick="showSection('trainings'); toggleMobileMenu();">Тренировки</button>
-  <button class="nav-btn hidden" id="profileMobileNavBtn" onclick="showSection('profile'); toggleMobileMenu();">Профиль</button>
-  <button class="nav-btn hidden" id="adminMobileNavBtn" onclick="showSection('admin'); toggleMobileMenu();">Управление</button>
-</div>
 
 <!-- Bottom Mobile Nav -->
 <nav class="bottom-nav" id="bottomNav">
@@ -3195,25 +3218,40 @@ function updateUI() {
     const userEmail = (currentUser.email || '').toLowerCase().trim();
     db.collection("users").doc(userEmail).get().then(doc => {
       let displayName = userEmail;
+      let avatarData = null;
       if (doc.exists) {
         const data = doc.data();
         displayName = (data.firstName || '') + ' ' + (data.lastName || '');
         if (displayName.trim() === '') displayName = data.login || userEmail;
+        avatarData = data.avatar || null;
       }
       // Обновляем UI с именем
       const nameSpan = document.querySelector('.user-name');
       if (nameSpan) nameSpan.textContent = displayName;
+      // Аватар в шапке (клик — профиль)
+      const avatarBtn = document.getElementById('headerAvatarBtn');
+      if (avatarBtn) {
+        if (avatarData) {
+          avatarBtn.innerHTML = `<img class="header-avatar-img" src="${avatarData}" alt="">`;
+        } else {
+          const initial = escapeHtml(String(displayName || '?').trim().charAt(0).toUpperCase());
+          avatarBtn.innerHTML = `<span class="header-avatar-placeholder" style="background:${avatarColor(displayName)}">${initial}</span>`;
+        }
+      }
     });
 
     userInfo.innerHTML = `
       <span class="user-name">${currentUser.email}</span>
+      <button class="header-avatar" id="headerAvatarBtn" onclick="showSection('profile')" title="Профиль">
+        <span class="header-avatar-placeholder" style="background:#666">?</span>
+      </button>
       <button class="btn btn-secondary btn-sm" onclick="signOut()">Выйти</button>
     `;
 
     // Profile buttons: visible for all authenticated users
-    profileNavBtn.classList.remove('hidden');
-    profileMobileNavBtn.classList.remove('hidden');
-    profileBottomNavBtn.classList.remove('hidden');
+    if (profileNavBtn) profileNavBtn.classList.remove('hidden');
+    if (profileMobileNavBtn) profileMobileNavBtn.classList.remove('hidden');
+    if (profileBottomNavBtn) profileBottomNavBtn.classList.remove('hidden');
 
     // Create tournament button: visible for logged-in users
     const createTournamentBtn = document.getElementById('createTournamentMainBtn');
@@ -3221,13 +3259,13 @@ function updateUI() {
 
     // Admin buttons: visible for admin and superadmin
     if (isAdmin) {
-      adminNavBtn.classList.remove('hidden');
-      adminMobileNavBtn.classList.remove('hidden');
-      adminBottomNavBtn.classList.remove('hidden');
+      if (adminNavBtn) adminNavBtn.classList.remove('hidden');
+      if (adminMobileNavBtn) adminMobileNavBtn.classList.remove('hidden');
+      if (adminBottomNavBtn) adminBottomNavBtn.classList.remove('hidden');
     } else {
-      adminNavBtn.classList.add('hidden');
-      adminMobileNavBtn.classList.add('hidden');
-      adminBottomNavBtn.classList.add('hidden');
+      if (adminNavBtn) adminNavBtn.classList.add('hidden');
+      if (adminMobileNavBtn) adminMobileNavBtn.classList.add('hidden');
+      if (adminBottomNavBtn) adminBottomNavBtn.classList.add('hidden');
     }
 
     // Super Admin only tools: visible only for superadmin
@@ -3247,12 +3285,12 @@ function updateUI() {
     } else {
       userInfo.innerHTML = `<span style="color:var(--text-muted);font-size:13px;">Загрузка...</span>`;
     }
-    adminNavBtn.classList.add('hidden');
-    adminMobileNavBtn.classList.add('hidden');
-    adminBottomNavBtn.classList.add('hidden');
-    profileNavBtn.classList.add('hidden');
-    profileMobileNavBtn.classList.add('hidden');
-    profileBottomNavBtn.classList.add('hidden');
+    if (adminNavBtn) adminNavBtn.classList.add('hidden');
+    if (adminMobileNavBtn) adminMobileNavBtn.classList.add('hidden');
+    if (adminBottomNavBtn) adminBottomNavBtn.classList.add('hidden');
+    if (profileNavBtn) profileNavBtn.classList.add('hidden');
+    if (profileMobileNavBtn) profileMobileNavBtn.classList.add('hidden');
+    if (profileBottomNavBtn) profileBottomNavBtn.classList.add('hidden');
 
     // Create tournament button: hidden when not logged in
     const createTournamentBtn = document.getElementById('createTournamentMainBtn');
@@ -3306,7 +3344,8 @@ function showSection(section) {
 }
 
 function toggleMobileMenu() {
-  document.getElementById('mobileNav').classList.toggle('open');
+  const mn = document.getElementById('mobileNav');
+  if (mn) mn.classList.toggle('open');
 }
 
 // ============================================
