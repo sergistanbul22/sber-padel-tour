@@ -2410,6 +2410,7 @@ let editingSchedule = false;
 let editingTournamentId = null;
 let admins = [];
 let selectedPlayersForTournament = new Set();
+let editingTournamentModalId = null; // режим редактирования: id турнира, открытого в модалке создания
 let rrPairs = []; // Round Robin pairs: array of {id, playerIds: [p1, p2], name}
 let unsubscribeUserDoc = null;
 let unsubscribeUsersList = null;
@@ -4017,6 +4018,7 @@ function renderTournaments() {
           </div>
           <div style="display:flex; gap:8px; align-items:center; margin-left: 8px;">
             <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('tournament', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
+            ${canEdit(t) && t.status === 'upcoming' ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); openEditTournamentModal('${t.id}')" title="Редактировать"><svg class="li"><use href="#i-pencil"/></svg></span>` : ''}
             ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
           </div>
         </div>
@@ -4978,7 +4980,8 @@ function renderPlayerSelect() {
   }
 
   container.innerHTML = html;
-  document.getElementById('selectedCount').textContent = selectedPlayersForTournament.size;
+  const selectedCountEl = document.getElementById('selectedCount');
+  if (selectedCountEl) selectedCountEl.textContent = selectedPlayersForTournament.size;
 
   // Show/hide "All players" label
   const allLabel = document.getElementById('allPlayersLabel');
@@ -5129,6 +5132,7 @@ function autoFormPairs() {
 
 async function createTournament() {
   if (locks.createTournament) return;
+  if (editingTournamentModalId) { await saveTournamentEdit(); return; }
   locks.createTournament = true;
   const name = document.getElementById('tournamentName').value.trim();
   const date = document.getElementById('tournamentDate').value;
@@ -6669,6 +6673,194 @@ function renderGamesLoadMore() {
 
 function closeCreateTournamentModal() {
   document.getElementById('createTournamentModal').classList.remove('show');
+  resetTournamentEditMode();
+}
+
+// ===== Редактирование предстоящего турнира организатором =====
+function resetTournamentEditMode() {
+  if (editingTournamentModalId === null) return;
+  editingTournamentModalId = null;
+  const titleEl = document.querySelector('#createTournamentModal .modal-title');
+  if (titleEl) titleEl.innerHTML = '<svg class="li"><use href="#i-trophy"/></svg> Создать турнир';
+  const btn = document.getElementById('createTournamentBtn');
+  if (btn) btn.innerHTML = '<svg class="li"><use href="#i-trophy"/></svg> Создать турнир';
+}
+
+function openEditTournamentModal(tournamentId) {
+  const t = tournaments.find(x => x.id === tournamentId);
+  if (!t) return;
+  if (!canEdit(t)) { showToast('Редактировать может только организатор или администратор', 'error'); return; }
+  if (t.status !== 'upcoming') { showToast('Редактировать можно только предстоящие турниры', 'error'); return; }
+
+  editingTournamentModalId = tournamentId;
+  document.getElementById('createTournamentModal').classList.add('show');
+  document.getElementById('tournamentName').value = t.name || '';
+  document.getElementById('tournamentDate').value = t.date || '';
+  document.getElementById('tournamentTimeStart').value = t.timeStart || '';
+  document.getElementById('tournamentTimeEnd').value = t.timeEnd || '';
+  document.getElementById('tournamentComment').value = t.comment || '';
+  document.getElementById('addTournamentLocationWrap').style.display = 'none';
+  document.getElementById('tournamentType').value = t.type || 'americano';
+  document.getElementById('scoringSystem').value = t.scoringSystem || 'points';
+  if (t.type === 'roundrobin') {
+    const pairs = t.pairs?.length || Math.max((t.totalSlots || 8) / 2, 4);
+    const courts = t.courts || 1;
+    const key = pairs + '_' + courts;
+    document.getElementById('rrPairCount').value = ['4_1', '4_2', '8_2', '8_4'].includes(key) ? key : '4_1';
+  } else {
+    const size = String(t.totalSlots || 8);
+    document.getElementById('tournamentSize').value = ['4', '8', '12', '16'].includes(size) ? size : '8';
+  }
+  onScoringSystemChange();
+  onTournamentTypeChange();
+  document.getElementById('tournamentPoints').value = String(t.pointsPerMatch || 24);
+  populateTournamentSelects();
+  const locSelect = document.getElementById('tournamentLocation');
+  if (t.location && ![...locSelect.options].some(o => o.value === t.location)) {
+    locSelect.add(new Option(t.location, t.location));
+  }
+  locSelect.value = t.location || '';
+
+  // Участники: подставляем уже занятые слоты (заявки в очереди не трогаем — хранятся отдельно)
+  (t.slots || []).forEach((s, i) => {
+    const sel = document.getElementById(`tournamentSlot_${i}`);
+    if (sel && s.playerId) {
+      if (![...sel.options].some(o => o.value === s.playerId)) {
+        sel.add(new Option(s.playerName || 'Игрок', s.playerId));
+      }
+      sel.value = s.playerId;
+    }
+  });
+
+  const titleEl = document.querySelector('#createTournamentModal .modal-title');
+  if (titleEl) titleEl.innerHTML = '<svg class="li"><use href="#i-pencil"/></svg> Редактировать турнир';
+  document.getElementById('createTournamentBtn').innerHTML = '<svg class="li"><use href="#i-save"/></svg> Сохранить изменения';
+}
+
+async function saveTournamentEdit() {
+  if (locks.createTournament) return;
+  const id = editingTournamentModalId;
+  const t = tournaments.find(x => x.id === id);
+  if (!t) { showToast('Турнир не найден', 'error'); editingTournamentModalId = null; return; }
+  locks.createTournament = true;
+
+  const name = document.getElementById('tournamentName').value.trim();
+  const date = document.getElementById('tournamentDate').value;
+  const timeStart = document.getElementById('tournamentTimeStart').value;
+  const timeEnd = document.getElementById('tournamentTimeEnd').value;
+  const location = document.getElementById('tournamentLocation').value;
+  const comment = document.getElementById('tournamentComment').value.trim();
+  const type = document.getElementById('tournamentType').value;
+  const scoringSystem = document.getElementById('scoringSystem').value;
+
+  const fail = msg => { showToast(msg, 'error'); locks.createTournament = false; return; };
+  if (!name) return fail('Введите название турнира');
+  if (!date) return fail('Выберите дату');
+  if (!location) return fail('Выберите локацию');
+
+  let size, points = 24, rrCfg = null;
+  if (type === 'americano') {
+    size = parseInt(document.getElementById('tournamentSize').value);
+    points = parseInt(document.getElementById('tournamentPoints').value);
+  } else {
+    rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
+    size = rrCfg.pairs * 2;
+    if (scoringSystem === 'points') {
+      points = parseInt(document.getElementById('tournamentPoints').value);
+    }
+  }
+
+  const oldFilled = (t.slots || []).filter(s => s.playerId);
+  if (oldFilled.length > size) {
+    return fail(`Нельзя уменьшить состав: уже записано ${oldFilled.length} участников`);
+  }
+
+  const slots = [];
+  const playerIds = [];
+  for (let i = 0; i < size; i++) {
+    const select = document.getElementById(`tournamentSlot_${i}`);
+    const pid = select ? select.value : '';
+    if (pid) {
+      const prev = oldFilled.find(s => s.playerId === pid);
+      const player = players.find(p => p.id === pid);
+      slots.push({ playerId: pid, playerName: player ? player.name : (prev?.playerName || ''), bookedAt: prev ? prev.bookedAt : new Date().toISOString() });
+      playerIds.push(pid);
+    } else {
+      slots.push({ playerId: null, playerName: null, bookedAt: null });
+    }
+  }
+  if (new Set(playerIds).size !== playerIds.length) return fail('Один игрок выбран в нескольких слотах');
+
+  // Пары и расписание: Americano пересчитываем; RR — сохраняем пары только если состав не изменился
+  let scheduleData = null, pairsData = null, courtsData = null;
+  if (type === 'americano') {
+    const schedule = generateSchedule(playerIds.length);
+    if (!schedule) return fail('Ошибка генерации расписания');
+    scheduleData = JSON.stringify(schedule);
+  } else {
+    courtsData = rrCfg ? rrCfg.courts : (t.courts || 1);
+    const oldKey = (t.playerIds || []).slice().sort().join('|');
+    const newKey = playerIds.slice().sort().join('|');
+    if (oldKey === newKey && Array.isArray(t.pairs) && t.pairs.length) {
+      pairsData = t.pairs;
+      scheduleData = t.scheduleData || null;
+    } else {
+      pairsData = []; // состав изменился — пары переформируются в карточке турнира
+    }
+  }
+
+  const updateData = {
+    name, date,
+    timeStart: timeStart || null,
+    timeEnd: timeEnd || null,
+    location,
+    comment: comment || null,
+    type,
+    scoringSystem,
+    playerIds,
+    slots,
+    totalSlots: size,
+    pointsPerMatch: points,
+    scheduleData,
+    scores: {},
+    leaderboard: [],
+    pairs: pairsData,
+    courts: courtsData
+  };
+
+  const btn = document.getElementById('createTournamentBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading"></span> Сохранение...';
+
+  try {
+    await db.collection('padel_tournaments').doc(id).update(updateData);
+
+    // Синхронизация счётчиков участий (добавленные/убранные игроки)
+    try {
+      const oldIds = t.playerIds || [];
+      for (const pid of playerIds.filter(x => !oldIds.includes(x))) {
+        await db.collection('padel_players').doc(pid).update({ tournamentCount: firebase.firestore.FieldValue.increment(1) });
+      }
+      for (const pid of oldIds.filter(x => !playerIds.includes(x))) {
+        await db.collection('padel_players').doc(pid).update({ tournamentCount: firebase.firestore.FieldValue.increment(-1) });
+      }
+    } catch (countErr) {
+      console.log('Skipped player count update (no permission):', countErr.message);
+    }
+
+    showToast('Турнир обновлён', 'success');
+    document.getElementById('tournamentName').value = '';
+    rrPairs = [];
+    closeCreateTournamentModal();
+    openTournament(id);
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    locks.createTournament = false;
+    btn.disabled = false;
+    btn.innerHTML = '<svg class="li"><use href="#i-trophy"/></svg> Создать турнир';
+    resetTournamentEditMode();
+  }
 }
 
 
@@ -7719,6 +7911,7 @@ function copyPlannedGame(plannedGameId) {
 }
 
 function openCreateTournamentModal() {
+  resetTournamentEditMode();
   document.getElementById('createTournamentModal').classList.add('show');
   // Set default date
   document.getElementById('tournamentDate').valueAsDate = new Date();
