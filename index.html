@@ -552,6 +552,34 @@
     padding: 0 20px;
   }
 
+  /* Персональная статистика: таблица встреч — влезает в экран без горизонтального скролла */
+  .h2h-table-wrap {
+    overflow-x: auto;
+    margin-top: 10px;
+  }
+  .data-table.h2h-table {
+    width: 100%;
+    font-size: 13px;
+  }
+  .data-table.h2h-table th {
+    padding: 8px 4px;
+    letter-spacing: 0.5px;
+  }
+  .data-table.h2h-table td {
+    padding: 8px 4px;
+  }
+  .data-table.h2h-table th:not(:first-child),
+  .data-table.h2h-table td:not(:first-child) {
+    text-align: center;
+    white-space: nowrap;
+  }
+  .data-table.h2h-table td:first-child {
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   #playersTable {
     min-width: 700px;
   }
@@ -1674,6 +1702,7 @@
 
 <!-- Home Section -->
 <section class="section active" id="section-home">
+  <div id="homePublic">
   <div class="hero">
     <p>Бесплатная платформа для организации тренировок, игр и турниров по падел теннису для всех желающих. Автоматическое определение рейтинга по модифицированной системе TrueSkill.</p>
   </div>
@@ -1702,6 +1731,17 @@
     <p style="text-align: center; font-size: 12px; color: var(--text-muted); margin-top: 20px; line-height: 1.5;">
       По всем вопросам развития функционала пишите на <a href="mailto:6585875box@gmail.com" style="color: var(--accent);">6585875box@gmail.com</a>
     </p>
+  </div>
+  </div>
+
+  <!-- Главная для залогиненных: персональная статистика (бывшие «Личные встречи» из Профиля) -->
+  <div id="homePersonal" style="display:none;">
+    <div class="card" style="max-width: 500px; margin: 24px auto; display:none;" id="h2hHomeCard">
+      <div class="card-header">
+        <span class="card-title"><svg class="li"><use href="#i-swords"/></svg> Персональная статистика</span>
+      </div>
+      <div id="h2hHomeContent" style="padding: 16px;"></div>
+    </div>
   </div>
 </section>
 
@@ -1806,13 +1846,6 @@
         Загрузка...
       </div>
     </div>
-  </div>
-
-  <div class="card" style="max-width: 500px; margin: 24px auto; display:none;" id="h2hProfileCard">
-    <div class="card-header">
-      <span class="card-title"><svg class="li"><use href="#i-swords"/></svg> Личные встречи</span>
-    </div>
-    <div id="h2hProfileContent" style="padding: 16px;"></div>
   </div>
 
   <div class="card" style="max-width: 500px; margin: 24px auto;">
@@ -2564,6 +2597,7 @@ function applyPlayersRows(rows) {
   renderPlayers();
   updateStats();
   renderPlayerSelect();
+  if (currentUser && document.getElementById('section-home')?.classList.contains('active')) renderHomeStats();
 }
 function applyTournamentsRows(rows) {
   tournaments = rows.map(data => {
@@ -2590,6 +2624,7 @@ function applyTournamentsRows(rows) {
   renderTournaments();
   updateStats();
   recalcTournamentCounts();
+  if (currentUser && document.getElementById('section-home')?.classList.contains('active')) renderHomeStats();
 }
 function applyTrainingsRows(rows) {
   trainings = rows;
@@ -3216,6 +3251,8 @@ function signOut() {
 // UI UPDATES
 // ============================================
 function updateUI() {
+  updateHomeZone();
+  renderHomeStats();
   const userInfo = document.getElementById('userInfo');
   const adminNavBtn = document.getElementById('adminNavBtn');
   const adminMobileNavBtn = document.getElementById('adminMobileNavBtn');
@@ -3345,6 +3382,10 @@ function showSection(section) {
   const bottomBtn = document.querySelector(`.bottom-nav .nav-btn[data-section="${section}"]`);
   if (bottomBtn) bottomBtn.classList.add('active');
 
+  if (section === 'home') {
+    updateHomeZone();
+    renderHomeStats();
+  }
   if (section === 'games') {
     renderGames();
   }
@@ -3498,7 +3539,6 @@ async function renderProfile() {
     console.error("Profile render error:", e);
     container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Ошибка загрузки профиля</div>';
   }
-  renderProfileH2h(currentProfilePlayerId);
 }
 
 async function saveProfile() {
@@ -4842,9 +4882,50 @@ function computePlayerH2H(pid) {
   })).sort((a, b) => a.winrate - b.winrate || b.g - a.g || a.diff - b.diff);
 }
 
-async function renderProfileH2h(pid) {
-  const card = document.getElementById('h2hProfileCard');
-  const content = document.getElementById('h2hProfileContent');
+let h2hHardestFirst = true;
+let h2hCurrentPid = null;
+
+function toggleH2hSort() {
+  h2hHardestFirst = !h2hHardestFirst;
+  if (h2hCurrentPid) renderHomeH2h(h2hCurrentPid);
+}
+
+function updateHomeZone() {
+  const pub = document.getElementById('homePublic');
+  const per = document.getElementById('homePersonal');
+  if (!pub || !per) return;
+  const logged = !!currentUser;
+  pub.style.display = logged ? 'none' : '';
+  per.style.display = logged ? '' : 'none';
+}
+
+async function renderHomeStats() {
+  const card = document.getElementById('h2hHomeCard');
+  const content = document.getElementById('h2hHomeContent');
+  if (!card || !content) return;
+  if (!currentUser) { card.style.display = 'none'; return; }
+  let pid = (currentUserData && currentUserData.playerId) || null;
+  if (!pid) {
+    const email = (currentUser.email || '').toLowerCase().trim();
+    if (email) {
+      try {
+        const d = await db.collection('users').doc(email).get();
+        pid = d.exists ? (d.data().playerId || null) : null;
+      } catch (e) { /* профиль недоступен */ }
+    }
+  }
+  if (!pid) {
+    card.style.display = 'block';
+    content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Профиль игрока не привязан к аккаунту</div>';
+    return;
+  }
+  renderHomeH2h(pid);
+}
+
+async function renderHomeH2h(pid) {
+  h2hCurrentPid = pid;
+  const card = document.getElementById('h2hHomeCard');
+  const content = document.getElementById('h2hHomeContent');
   if (!card || !content) return;
   if (!pid) { card.style.display = 'none'; return; }
   card.style.display = 'block';
@@ -4858,14 +4939,15 @@ async function renderProfileH2h(pid) {
     }
     const totalG = rows.reduce((a, r) => a + r.g, 0);
     const totalW = rows.reduce((a, r) => a + r.w, 0);
-    const eligible = rows.filter(r => r.g >= 2);
-    const hardest = eligible.length ? eligible[0] : null;
+    const hardest = rows.find(r => r.g >= 2) || null;
+    const displayRows = h2hHardestFirst ? rows : rows.slice().reverse();
+    const eligible = displayRows.filter(r => r.g >= 2);
 
     const statBox = (k, v, color) => `<div style="flex:1;min-width:74px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
       <div style="font-size:11px;color:var(--text-muted);">${k}</div>
       <div style="font-size:17px;font-weight:700;${color || ''}">${v}</div></div>`;
 
-    const bars = eligible.slice(0, 8).map(r => `
+    const bars = eligible.slice(0, 10).map(r => `
       <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;">
         <div style="width:46%;text-align:right;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(getPlayerNameById(r.oid))} <span style="color:var(--text-muted);opacity:0.7;">· ${r.g}</span></div>
         <div style="flex:1;height:13px;background:var(--bg-secondary);border-radius:4px;overflow:hidden;">
@@ -4874,9 +4956,9 @@ async function renderProfileH2h(pid) {
         <div style="width:40px;font-weight:600;">${Math.round(r.winrate * 100)}%</div>
       </div>`).join('');
 
-    const tableRows = rows.map(r => `
+    const tableRows = displayRows.map(r => `
       <tr style="${hardest && r.oid === hardest.oid ? 'background:rgba(231,76,60,0.14);' : ''}">
-        <td>${escapeHtml(getPlayerNameById(r.oid))}${hardest && r.oid === hardest.oid ? '<span style="display:inline-block;background:var(--danger);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;margin-left:6px;">😈 сложнейший</span>' : ''}</td>
+        <td>${escapeHtml(getPlayerNameById(r.oid))}</td>
         <td>${r.g}</td>
         <td style="color:var(--success);font-weight:700;">${r.w}</td>
         <td style="color:var(--danger);">${r.l}</td>
@@ -4892,12 +4974,20 @@ async function renderProfileH2h(pid) {
         ${statBox('Поражений', totalG - totalW, 'color:var(--danger);')}
         ${statBox('Соперников', rows.length)}
       </div>
-      <div style="font-size:12px;color:var(--text-muted);margin:10px 0 4px;">Винрейт по соперникам (мин. 2 встречи)</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 4px;">
+        <div style="font-size:12px;color:var(--text-muted);">Винрейт по соперникам (мин. 2 встречи)</div>
+        <span style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+          <span style="font-size:12px;color:var(--text-muted);">сложность:</span>
+          <button class="btn btn-secondary" onclick="toggleH2hSort()" title="Порядок: от сложных к простым / от простых к сложным" style="width:24px;height:24px;padding:0;font-size:13px;display:flex;align-items:center;justify-content:center;line-height:0;">
+            <svg class="li"><use href="#i-arrow-${h2hHardestFirst ? 'down' : 'up'}"/></svg>
+          </button>
+        </span>
+      </div>
       ${bars || '<div style="font-size:12px;color:var(--text-muted);">Нет соперников с двумя и более встречами</div>'}
-      <div class="table-scroll" style="margin-top:10px;"><table class="data-table" style="font-size:13px;">
+      <div class="h2h-table-wrap"><table class="data-table h2h-table">
         <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
         <tbody>${tableRows}</tbody></table></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">«Сложнейший соперник» — минимальный винрейт при минимум 2 встречах. Учитываются завершённые турниры (американо) и отдельные игры.</div>`;
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. Учитываются завершённые турниры (американо) и отдельные игры.</div>`;
   } catch (e) {
     console.error('H2H render error:', e);
     content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику встреч</div>';
