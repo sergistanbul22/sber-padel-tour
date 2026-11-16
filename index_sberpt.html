@@ -2521,6 +2521,7 @@ function init() {
     subscribeToGameCounters();
     subscribeToTrainings();
     subscribeToPlannedGames();
+    subscribeToH2hGames();
     // subscribeToTrainingMeta() moved to handleAuthStateChanged (requires auth)
 
     auth.onAuthStateChanged(handleAuthStateChanged);
@@ -4821,14 +4822,33 @@ function svgDetailLines(t, pid, story) {
 }
 
 // ---- Личные встречи: агрегат по всем завершённым турнирам и играм (считается на клиенте) ----
+// Завершённые игры держит живая подписка subscribeToH2hGames (как players/tournaments) —
+// главная отрисовывается мгновенно из памяти, без холодного запроса при каждом открытии.
 let h2hGamesAll = null;
-let h2hGamesFetchedAt = 0;
+let h2hGamesReady = false;
+let h2hGamesReadyResolve = null;
+const h2hGamesReadyPromise = new Promise(res => { h2hGamesReadyResolve = res; });
 
+function subscribeToH2hGames() {
+  db.collection('padel_games').where('status', '==', 'finished')
+    .onSnapshot(snapshot => {
+      h2hGamesAll = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      h2hGamesReady = true;
+      if (h2hGamesReadyResolve) { h2hGamesReadyResolve(); h2hGamesReadyResolve = null; }
+      // авто-перерисовка главной при свежих данных (механизм как applyPlayersRows)
+      if (h2hCurrentPid && currentUser && document.getElementById('section-home')?.classList.contains('active')) {
+        renderHomeH2h(h2hCurrentPid);
+      }
+    }, err => {
+      console.error('H2H games subscription error:', err);
+      h2hGamesReady = true; // не держим «Загрузка...» при сбое — покажем что есть
+      if (h2hGamesReadyResolve) { h2hGamesReadyResolve(); h2hGamesReadyResolve = null; }
+    });
+}
+
+// Совместимость: данные уже в памяти благодаря подписке — дожидаемся только первый снапшот.
 async function ensureH2hGames() {
-  if (h2hGamesAll && (Date.now() - h2hGamesFetchedAt) < 5 * 60 * 1000) return;
-  const snap = await db.collection('padel_games').where('status', '==', 'finished').get();
-  h2hGamesAll = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  h2hGamesFetchedAt = Date.now();
+  if (!h2hGamesReady) await h2hGamesReadyPromise;
 }
 
 function computePlayerH2H(pid) {
