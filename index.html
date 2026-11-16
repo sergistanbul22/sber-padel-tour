@@ -1180,7 +1180,9 @@
     letter-spacing: 0.5px;
   }
 
-  /* Параметр карточки — неразрывная фраза с иконкой: переносится целиком */
+  /* Параметр карточки — неразрывная фраза с иконкой: переносится целиком.
+     Разделитель привязан к началу следующего параметра (::before), чтобы
+     при переносе фразы точка не оставалась висеть в конце предыдущей строки */
   .nowrap-param {
     white-space: nowrap;
   }
@@ -4009,23 +4011,23 @@ function renderTournaments() {
     const totalSlots = t.totalSlots || t.playerIds?.length || 0;
 
     html += `
-      <div class="card">
+      <div class="card" style="position: relative;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="cursor: pointer; flex: 1;" onclick="openTournament('${t.id}')">
-            <div style="margin-bottom: 4px;">
+            <div style="margin-bottom: 4px; padding-right: 112px;">
               <span class="card-title tournament-card-title">${escapeHtml(t.name)}</span>
             </div>
             <div style="font-size: 13px; color: var(--text-muted);">
-              <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}</span> · <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}</span>${t.comment ? ' · <span class="nowrap-param"><svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) + '</span>' : ''} · <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${totalSlots} игроков</span> · <span class="nowrap-param">${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка`}</span>
+              <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}</span> <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}</span>${t.comment ? ' <span class="nowrap-param"><svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) + '</span>' : ''} <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${totalSlots} игроков</span> <span class="nowrap-param">${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка`}</span>
               ${t.createdByName ? `<br><span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> Организатор: ${escapeHtml(t.createdByName)}</span>` : ''}
             </div>
           </div>
-          <div style="display:flex; gap:8px; align-items:center; margin-left: 8px;">
+        </div>
+        <div style="position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center;">
             <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('tournament', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
             ${canEdit(t) && t.status === 'upcoming' ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); openEditTournamentModal('${t.id}')" title="Редактировать"><svg class="li"><use href="#i-pencil"/></svg></span>` : ''}
             ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
           </div>
-        </div>
         ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
         <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
           <span class="status-badge ${statusClass}">${statusText}</span>
@@ -6628,7 +6630,7 @@ function renderGames() {
         <div class="card" style="position: relative; padding: 16px;${isPast || isConverted ? ' opacity: 0.55;' : ''}">
           <div style="display: flex; justify-content: space-between; align-items: flex-start;">
             <div style="cursor: pointer; flex: 1;" onclick="${isConverted ? '' : `openPlannedGame('${pg.id}')`}">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; padding-right: 112px;">
                 <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
                   ${isConverted ? '<svg class="li"><use href="#i-check"/></svg> ' : ''}<svg class="li"><use href="#i-clipboard"/></svg> Запланированная игра
                 </span>
@@ -6638,7 +6640,7 @@ function renderGames() {
                 <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${dateStr}</span>
               </div>
               <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
-                <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(pg.location)}</span>${pg.createdByName ? ' | <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ' + escapeHtml(pg.createdByName) + '</span>' : ''}
+                <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(pg.location)}</span>${pg.createdByName ? ' <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ' + escapeHtml(pg.createdByName) + '</span>' : ''}
               </div>
               ${pg.comment ? `<div style="font-size: 12px; color: var(--accent); font-weight: 500; margin-bottom: 2px;"><svg class="li"><use href="#i-message"/></svg> ${escapeHtml(pg.comment)}</div>` : ''}
               <div style="font-size: 13px; font-weight: 600;">
@@ -6647,11 +6649,11 @@ function renderGames() {
                 </span>
               </div>
             </div>
-            ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
+            <div style="position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center;">
               <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('planned-game', '${pg.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
-              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyPlannedGame('${pg.id}')" title="Копировать"><svg class="li"><use href="#i-clipboard"/></svg></span>
-              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deletePlannedGame('${pg.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>
-            </div>` : `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('planned-game', '${pg.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>`}
+              ${isAdmin ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyPlannedGame('${pg.id}')" title="Копировать"><svg class="li"><use href="#i-clipboard"/></svg></span>
+              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deletePlannedGame('${pg.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+            </div>
           </div>
         </div>
       `;
@@ -8955,13 +8957,13 @@ function renderTrainings() {
       <div class="card" style="position: relative; padding: 16px;${isPast ? ' opacity: 0.55;' : ''}">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="cursor: pointer; flex: 1;" onclick="${isPast ? '' : `openTraining('${t.id}')`}">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; padding-right: 112px;">
               <span style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
                 ${isPast ? '<svg class="li"><use href="#i-check"/></svg> ' : ''}<svg class="li"><use href="#i-calendar-days"/></svg> ${dateStr}${isPast ? ' <span style="font-size:12px;color:var(--text-muted);">(завершена)</span>' : ''}
               </span>
             </div>
             <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
-              <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location)}</span>${t.coach ? ' | <span class="nowrap-param"><svg class="li"><use href="#i-tennis"/></svg> ' + escapeHtml(t.coach) + '</span>' : ''}${t.group ? ' | <span class="nowrap-param"><svg class="li"><use href="#i-users"/></svg> ' + escapeHtml(t.group) + '</span>' : ''}
+              <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location)}</span>${t.coach ? ' <span class="nowrap-param"><svg class="li"><use href="#i-tennis"/></svg> ' + escapeHtml(t.coach) + '</span>' : ''}${t.group ? ' <span class="nowrap-param"><svg class="li"><use href="#i-users"/></svg> ' + escapeHtml(t.group) + '</span>' : ''}
               ${t.createdByName ? '<br><span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> Организатор: ' + escapeHtml(t.createdByName) + '</span>' : ''}
               ${t.comment ? '<br><span class="nowrap-param"><svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) + '</span>' : ''}
             </div>
@@ -8974,12 +8976,12 @@ function renderTrainings() {
               </span>
             </div>
           </div>
-          ${isAdmin ? `<div style="display:flex; gap:8px; align-items:center;">
-            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('training', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
-            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyTraining('${t.id}')" title="Копировать"><svg class="li"><use href="#i-clipboard"/></svg></span>
-            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deleteTraining('${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>
-          </div>` : `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('training', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>`}
         </div>
+        <div style="position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center;">
+            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('training', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
+            ${isAdmin ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); copyTraining('${t.id}')" title="Копировать"><svg class="li"><use href="#i-clipboard"/></svg></span>
+            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); deleteTraining('${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+          </div>
       </div>
     `;
   });
