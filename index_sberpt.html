@@ -4851,7 +4851,7 @@ async function ensureH2hGames() {
   if (!h2hGamesReady) await h2hGamesReadyPromise;
 }
 
-function computePlayerH2H(pid) {
+function computePlayerH2H(pid, filter) {
   const agg = {};
   const add = (oppIds, win, pf, pa) => {
     (oppIds || []).forEach(oid => {
@@ -4864,7 +4864,7 @@ function computePlayerH2H(pid) {
     });
   };
   // Завершённые турниры американо (roundrobin не трогаем — формат парный, схема другая)
-  (tournaments || []).forEach(t => {
+  if (filter !== 'games') (tournaments || []).forEach(t => {
     if (t.status !== 'finished' || t.type === 'roundrobin') return;
     const pids = t.playerIds || [];
     const idx = pids.indexOf(pid);
@@ -4882,7 +4882,7 @@ function computePlayerH2H(pid) {
     });
   });
   // Отдельные завершённые игры
-  (h2hGamesAll || []).forEach(g => {
+  if (filter !== 'tournaments') (h2hGamesAll || []).forEach(g => {
     const in1 = (g.pair1 || []).includes(pid);
     const in2 = (g.pair2 || []).includes(pid);
     if (!in1 && !in2) return;
@@ -4904,6 +4904,13 @@ function computePlayerH2H(pid) {
 
 let h2hHardestFirst = true;
 let h2hCurrentPid = null;
+let h2hFilter = 'all'; // all | tournaments | games
+
+function setH2hFilter(f) {
+  if (h2hFilter === f) return;
+  h2hFilter = f;
+  if (h2hCurrentPid) renderHomeH2h(h2hCurrentPid);
+}
 
 function toggleH2hSort() {
   h2hHardestFirst = !h2hHardestFirst;
@@ -4952,11 +4959,15 @@ async function renderHomeH2h(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
-    const rows = computePlayerH2H(pid);
+    const rows = computePlayerH2H(pid, h2hFilter);
+    const filterBtn = (f, label) => `<button onclick="setH2hFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${h2hFilter === f ? 'var(--accent)' : 'transparent'};color:${h2hFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${h2hFilter === f ? '600' : '400'};">${label}</button>`;
+    const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
     if (!rows.length) {
-      content.innerHTML = '<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">Пока нет завершённых встреч</div>';
+      const emptyTxt = h2hFilter === 'tournaments' ? 'Пока нет турнирных встреч' : h2hFilter === 'games' ? 'Пока нет завершённых игр' : 'Пока нет завершённых встреч';
+      content.innerHTML = filterTabs + `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">${emptyTxt}</div>`;
       return;
     }
+    const srcNote = h2hFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : h2hFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
     const totalG = rows.reduce((a, r) => a + r.g, 0);
     const totalW = rows.reduce((a, r) => a + r.w, 0);
     const hardest = rows.find(r => r.g >= 2) || null;
@@ -4988,6 +4999,7 @@ async function renderHomeH2h(pid) {
       </tr>`).join('');
 
     content.innerHTML = `
+      ${filterTabs}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
         ${statBox('Встреч', totalG)}
         ${statBox('Побед', totalW, 'color:var(--success);')}
@@ -5007,7 +5019,7 @@ async function renderHomeH2h(pid) {
       <div class="h2h-table-wrap"><table class="data-table h2h-table">
         <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
         <tbody>${tableRows}</tbody></table></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. Учитываются завершённые турниры (американо) и отдельные игры.</div>`;
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. ${srcNote}</div>`;
   } catch (e) {
     console.error('H2H render error:', e);
     content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику встреч</div>';
