@@ -4853,12 +4853,14 @@ async function ensureH2hGames() {
 
 function computePlayerH2H(pid, filter) {
   const agg = {};
-  const add = (oppIds, win, pf, pa) => {
+  const add = (oppIds, res, pf, pa) => {
     (oppIds || []).forEach(oid => {
       if (!oid || oid === pid) return;
-      if (!agg[oid]) agg[oid] = { g: 0, w: 0, pf: 0, pa: 0 };
+      if (!agg[oid]) agg[oid] = { g: 0, w: 0, d: 0, l: 0, pf: 0, pa: 0 };
       agg[oid].g++;
-      if (win) agg[oid].w++;
+      if (res === 'w') agg[oid].w++;
+      else if (res === 'l') agg[oid].l++;
+      else agg[oid].d++; // ничья — отдельно: иначе незеркально выглядит у двух игроков
       agg[oid].pf += pf;
       agg[oid].pa += pa;
     });
@@ -4877,7 +4879,7 @@ function computePlayerH2H(pid, filter) {
         const myS = in1 ? americanoScoreOf(t, r, m, 0) : americanoScoreOf(t, r, m, 1);
         const oppS = in1 ? americanoScoreOf(t, r, m, 1) : americanoScoreOf(t, r, m, 0);
         const oppTeam = in1 ? mt.team2 : mt.team1;
-        add(oppTeam.map(i => pids[i]), myS > oppS, myS, oppS);
+        add(oppTeam.map(i => pids[i]), myS > oppS ? 'w' : myS < oppS ? 'l' : 'd', myS, oppS);
       });
     });
   });
@@ -4893,11 +4895,11 @@ function computePlayerH2H(pid, filter) {
     const pa = oppSets.reduce((a, b) => a + b, 0);
     const myWon = mySets.filter((v, i) => v > oppSets[i]).length;
     const oppWon = oppSets.filter((v, i) => v > mySets[i]).length;
-    add(in1 ? g.pair2 : g.pair1, myWon > oppWon, pf, pa);
+    add(in1 ? g.pair2 : g.pair1, myWon > oppWon ? 'w' : myWon < oppWon ? 'l' : 'd', pf, pa);
   });
   return Object.entries(agg).map(([oid, a]) => ({
-    oid, g: a.g, w: a.w, l: a.g - a.w,
-    winrate: a.g ? a.w / a.g : 0,
+    oid, g: a.g, w: a.w, d: a.d, l: a.l,
+    winrate: a.g ? (a.w + 0.5 * (a.d || 0)) / a.g : 0, // ничья = 0,5 победы (как в шахматах)
     pf: a.pf, pa: a.pa, diff: a.pf - a.pa
   })).sort((a, b) => a.winrate - b.winrate || b.g - a.g || a.diff - b.diff);
 }
@@ -4970,21 +4972,24 @@ async function renderHomeH2h(pid) {
     const srcNote = h2hFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : h2hFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
     const totalG = rows.reduce((a, r) => a + r.g, 0);
     const totalW = rows.reduce((a, r) => a + r.w, 0);
+    const totalD = rows.reduce((a, r) => a + (r.d || 0), 0);
+    const totalL = rows.reduce((a, r) => a + r.l, 0);
     const hardest = rows.find(r => r.g >= 2) || null;
     const displayRows = h2hHardestFirst ? rows : rows.slice().reverse();
     const eligible = displayRows.filter(r => r.g >= 2);
 
-    const statBox = (k, v, color) => `<div style="flex:1;min-width:74px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+    const pct = v => { const p = Math.round(v * 1000) / 10; return (Number.isInteger(p) ? String(p) : p.toFixed(1)) + '%'; };
+    const statBox = (k, v, color) => `<div style="flex:1;min-width:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;">
       <div style="font-size:11px;color:var(--text-muted);">${k}</div>
-      <div style="font-size:17px;font-weight:700;${color || ''}">${v}</div></div>`;
+      <div style="font-size:16px;font-weight:700;line-height:1.2;${color || ''}">${v}</div></div>`;
 
     const bars = eligible.slice(0, 10).map(r => `
       <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;">
         <div style="width:46%;text-align:right;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(getPlayerNameById(r.oid))} <span style="color:var(--text-muted);opacity:0.7;">· ${r.g}</span></div>
         <div style="flex:1;height:13px;background:var(--bg-secondary);border-radius:4px;overflow:hidden;">
-          <div style="height:100%;width:${Math.round(r.winrate * 100)}%;background:${r.oid === (hardest && hardest.oid) ? 'var(--danger)' : (r.winrate >= 0.5 ? 'var(--success)' : '#e6a817')};border-radius:4px;"></div>
+          <div style="height:100%;width:${Math.round(r.winrate * 1000) / 10}%;background:${r.oid === (hardest && hardest.oid) ? 'var(--danger)' : (r.winrate >= 0.5 ? 'var(--success)' : '#e6a817')};border-radius:4px;"></div>
         </div>
-        <div style="width:40px;font-weight:600;">${Math.round(r.winrate * 100)}%</div>
+        <div style="width:40px;font-weight:600;">${pct(r.winrate)}</div>
       </div>`).join('');
 
     const tableRows = displayRows.map(r => `
@@ -4992,19 +4997,24 @@ async function renderHomeH2h(pid) {
         <td>${escapeHtml(getPlayerNameById(r.oid))}</td>
         <td>${r.g}</td>
         <td style="color:var(--success);font-weight:700;">${r.w}</td>
+        <td style="color:var(--text-muted);">${r.d || 0}</td>
         <td style="color:var(--danger);">${r.l}</td>
-        <td><b>${Math.round(r.winrate * 100)}%</b></td>
+        <td><b>${pct(r.winrate)}</b></td>
         <td>${r.pf} : ${r.pa}</td>
         <td style="color:${r.diff >= 0 ? 'var(--success)' : 'var(--danger)'};">${r.diff >= 0 ? '+' : ''}${r.diff}</td>
       </tr>`).join('');
 
     content.innerHTML = `
       ${filterTabs}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        ${statBox('Встреч', totalG)}
-        ${statBox('Побед', totalW, 'color:var(--success);')}
-        ${statBox('Поражений', totalG - totalW, 'color:var(--danger);')}
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        ${statBox('Игр', totalG)}
         ${statBox('Соперников', rows.length)}
+        ${statBox('Винрейт', pct(totalG ? (totalW + 0.5 * totalD) / totalG : 0))}
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        ${statBox('Побед', totalW, 'color:var(--success);')}
+        ${statBox('Ничьих', totalD)}
+        ${statBox('Поражений', totalL, 'color:var(--danger);')}
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 4px;">
         <div style="font-size:12px;color:var(--text-muted);">Винрейт по соперникам (мин. 2 встречи)</div>
@@ -5017,9 +5027,9 @@ async function renderHomeH2h(pid) {
       </div>
       ${bars || '<div style="font-size:12px;color:var(--text-muted);">Нет соперников с двумя и более встречами</div>'}
       <div class="h2h-table-wrap"><table class="data-table h2h-table">
-        <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
+        <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>Н</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
         <tbody>${tableRows}</tbody></table></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. ${srcNote}</div>`;
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. Ничьи учитываются отдельно и добавляют по 0,5 победы при расчёте винрейта. ${srcNote}</div>`;
   } catch (e) {
     console.error('H2H render error:', e);
     content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику встреч</div>';
