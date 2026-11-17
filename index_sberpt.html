@@ -4851,7 +4851,8 @@ async function ensureH2hGames() {
   if (!h2hGamesReady) await h2hGamesReadyPromise;
 }
 
-function computePlayerH2H(pid, filter) {
+function computePlayerH2H(pid, filter, mode) {
+  mode = mode || 'opponents'; // opponents | partners — соперники или напарники по команде/паре
   const agg = {};
   const add = (oppIds, res, pf, pa) => {
     (oppIds || []).forEach(oid => {
@@ -4879,7 +4880,9 @@ function computePlayerH2H(pid, filter) {
         const myS = in1 ? americanoScoreOf(t, r, m, 0) : americanoScoreOf(t, r, m, 1);
         const oppS = in1 ? americanoScoreOf(t, r, m, 1) : americanoScoreOf(t, r, m, 0);
         const oppTeam = in1 ? mt.team2 : mt.team1;
-        add(oppTeam.map(i => pids[i]), myS > oppS ? 'w' : myS < oppS ? 'l' : 'd', myS, oppS);
+        // partners: в ту же строку идут партнёры по своей команде (кроме себя)
+        const targetIds = mode === 'partners' ? (in1 ? mt.team1 : mt.team2).filter(i => i !== idx) : oppTeam;
+        add(targetIds.map(i => pids[i]), myS > oppS ? 'w' : myS < oppS ? 'l' : 'd', myS, oppS);
       });
     });
   });
@@ -4895,7 +4898,9 @@ function computePlayerH2H(pid, filter) {
     const pa = oppSets.reduce((a, b) => a + b, 0);
     const myWon = mySets.filter((v, i) => v > oppSets[i]).length;
     const oppWon = oppSets.filter((v, i) => v > mySets[i]).length;
-    add(in1 ? g.pair2 : g.pair1, myWon > oppWon ? 'w' : myWon < oppWon ? 'l' : 'd', pf, pa);
+    // partners: в строку идёт партнёр по своей паре (кроме себя)
+    const targetIds = mode === 'partners' ? (in1 ? g.pair1 : g.pair2).filter(x => x !== pid) : (in1 ? g.pair2 : g.pair1);
+    add(targetIds, myWon > oppWon ? 'w' : myWon < oppWon ? 'l' : 'd', pf, pa);
   });
   return Object.entries(agg).map(([oid, a]) => ({
     oid, g: a.g, w: a.w, d: a.d, l: a.l,
@@ -4907,6 +4912,13 @@ function computePlayerH2H(pid, filter) {
 let h2hHardestFirst = true;
 let h2hCurrentPid = null;
 let h2hFilter = 'all'; // all | tournaments | games
+let h2hMode = 'opponents'; // opponents | partners
+
+function setH2hMode(m) {
+  if (h2hMode === m) return;
+  h2hMode = m;
+  if (h2hCurrentPid) renderHomeH2h(h2hCurrentPid);
+}
 
 function setH2hFilter(f) {
   if (h2hFilter === f) return;
@@ -4961,12 +4973,18 @@ async function renderHomeH2h(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
-    const rows = computePlayerH2H(pid, h2hFilter);
+    const rows = computePlayerH2H(pid, h2hFilter, h2hMode);
+    const isPartners = h2hMode === 'partners';
+    const whoLabel = isPartners ? 'Напарник' : 'Соперник';
+    const whoGen = isPartners ? 'Напарников' : 'Соперников';
+    const whoDat = isPartners ? 'напарникам' : 'соперникам';
+    const modeBtn = (m, label) => `<button onclick="setH2hMode('${m}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${h2hMode === m ? 'var(--accent)' : 'transparent'};color:${h2hMode === m ? '#fff' : 'var(--text-muted)'};font-weight:${h2hMode === m ? '600' : '400'};">${label}</button>`;
+    const modeTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:8px;">${modeBtn('opponents', 'Соперники')}${modeBtn('partners', 'Напарники')}</div>`;
     const filterBtn = (f, label) => `<button onclick="setH2hFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${h2hFilter === f ? 'var(--accent)' : 'transparent'};color:${h2hFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${h2hFilter === f ? '600' : '400'};">${label}</button>`;
     const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
     if (!rows.length) {
-      const emptyTxt = h2hFilter === 'tournaments' ? 'Пока нет турнирных встреч' : h2hFilter === 'games' ? 'Пока нет завершённых игр' : 'Пока нет завершённых встреч';
-      content.innerHTML = filterTabs + `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">${emptyTxt}</div>`;
+      const emptyTxt = h2hFilter === 'tournaments' ? (isPartners ? 'Пока нет совместных турнирных матчей' : 'Пока нет турнирных встреч') : h2hFilter === 'games' ? (isPartners ? 'Пока нет совместных игр' : 'Пока нет завершённых игр') : (isPartners ? 'Пока нет совместных матчей' : 'Пока нет завершённых встреч');
+      content.innerHTML = modeTabs + filterTabs + `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">${emptyTxt}</div>`;
       return;
     }
     const srcNote = h2hFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : h2hFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
@@ -5005,10 +5023,11 @@ async function renderHomeH2h(pid) {
       </tr>`).join('');
 
     content.innerHTML = `
+      ${modeTabs}
       ${filterTabs}
       <div style="display:flex;gap:8px;margin-bottom:8px;">
         ${statBox('Игр', totalG)}
-        ${statBox('Соперников', rows.length)}
+        ${statBox(whoGen, rows.length)}
         ${statBox('Винрейт', pct(totalG ? (totalW + 0.5 * totalD) / totalG : 0))}
       </div>
       <div style="display:flex;gap:8px;margin-bottom:10px;">
@@ -5017,7 +5036,7 @@ async function renderHomeH2h(pid) {
         ${statBox('Поражений', totalL, 'color:var(--danger);')}
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 4px;">
-        <div style="font-size:12px;color:var(--text-muted);">Винрейт по соперникам (мин. 2 встречи)</div>
+        <div style="font-size:12px;color:var(--text-muted);">Винрейт по ${whoDat} (мин. 2 встречи)</div>
         <span style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
           <span style="font-size:12px;color:var(--text-muted);">сложность:</span>
           <button class="btn btn-secondary" onclick="toggleH2hSort()" title="Порядок: от сложных к простым / от простых к сложным" style="width:24px;height:24px;padding:0;font-size:13px;display:flex;align-items:center;justify-content:center;line-height:0;">
@@ -5025,11 +5044,11 @@ async function renderHomeH2h(pid) {
           </button>
         </span>
       </div>
-      ${bars || '<div style="font-size:12px;color:var(--text-muted);">Нет соперников с двумя и более встречами</div>'}
+      ${bars || `<div style="font-size:12px;color:var(--text-muted);">Нет ${whoGen.toLowerCase()} с двумя и более встречами</div>`}
       <div class="h2h-table-wrap"><table class="data-table h2h-table">
-        <thead><tr><th>Соперник</th><th>Матчи</th><th>В</th><th>Н</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
+        <thead><tr><th>${whoLabel}</th><th>Матчи</th><th>В</th><th>Н</th><th>П</th><th>Винрейт</th><th>Очки</th><th>±</th></tr></thead>
         <tbody>${tableRows}</tbody></table></div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший соперник — минимальный винрейт при минимум 2 встречах. Ничьи учитываются отдельно и добавляют по 0,5 победы при расчёте винрейта. ${srcNote}</div>`;
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">Красной строкой выделен сложнейший ${isPartners ? 'напарник' : 'соперник'} — минимальный винрейт при минимум 2 встречах. Ничьи учитываются отдельно и добавляют по 0,5 победы при расчёте винрейта. ${srcNote}</div>`;
   } catch (e) {
     console.error('H2H render error:', e);
     content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику встреч</div>';
