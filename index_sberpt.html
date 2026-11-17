@@ -8,7 +8,7 @@
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#c8ff00">
+  <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SberPadel">
@@ -657,6 +657,12 @@
     border: 1px solid rgba(231,76,60,0.3);
   }
 
+  /* Вертикальная посадка текста в Safari/WebKit: браузер не поддерживает
+     @font-face ascent-override/descent-override (WebKit bug 219735) и шрифт
+     рендерится с исходными метриками → текст сидит высоко. JS оборачивает
+     текстовые узлы кнопок в span.btn_t и сдвигает на (as-de)/2 = 0.083em.
+     В Chrome/Firefox спаны не создаются — там работают метрик-оверрайды. */
+  .btn_t { display: inline-block; transform: translateY(0.083em); }
   .btn-text {
     background: transparent;
     color: var(--text-muted);
@@ -2472,6 +2478,43 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// --- вертикальная посадка текста в Safari/WebKit ---
+// Метрик-оверрайды @font-face не работают в WebKit → сдвигаем текст кнопок
+// через span.btn_t. Детект: AppleWebKit без токена Chrome/Chromium/Edg/OPR —
+// это Safari (macOS/iOS), Яндекс.Браузер и Chrome/Firefox на iOS (там везде
+// WebKit). Desktop-Яндекс отсекается по токену Chrome/ в его UA.
+var __isWebKitNoOverride = /AppleWebKit/.test(navigator.userAgent) &&
+  !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
+function wrapBtnText(root) {
+  root = root || document;
+  root.querySelectorAll('.btn').forEach(function(btn) {
+    Array.from(btn.childNodes).forEach(function(node) {
+      if (node.nodeType === 3 && node.textContent.trim()) {
+        var span = document.createElement('span');
+        span.className = 'btn_t';
+        btn.insertBefore(span, node);
+        span.appendChild(node);
+      }
+    });
+  });
+}
+(function() {
+  if (!__isWebKitNoOverride) return;
+  function initWrap() {
+    wrapBtnText(document);
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes.forEach(function(n) {
+          if (n.nodeType !== 1) return;
+          if (n.matches && n.matches('.btn')) wrapBtnText(n.parentNode || document);
+          if (n.querySelectorAll) wrapBtnText(n);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.body) initWrap();
+  else document.addEventListener('DOMContentLoaded', initWrap);
+})();
 // ============================================
 // FIREBASE CONFIG - ЗАПОЛНИТЕ СВОИ ДАННЫЕ
 // ============================================
