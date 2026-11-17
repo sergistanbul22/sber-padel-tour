@@ -853,6 +853,14 @@
   .match-avatars .player-avatar-mini + .player-avatar-mini { margin-left: -9px; }
   .match-avatars .player-avatar-mini { box-shadow: 0 0 0 2px var(--bg-card); }
 
+  /* Карточки игр (профиль + раздел «Игры»): пара одной строкой, счёт под парами */
+  .game-pair-names { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .game-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); }
+  @media (max-width: 600px) {
+    .game-pair-names { font-size: 12.5px; }
+    .game-card-footer { margin-top: 8px; padding-top: 7px; }
+  }
+
   @media (max-width: 768px) {
     .player-avatar { width: 28px; height: 28px; margin-right: 8px; font-size: 12px; }
   }
@@ -2017,18 +2025,16 @@
   </div>
 
   <!-- История участия: Турниры | Игры -->
-  <div class="card" style="max-width: 600px; margin: 24px auto;">
-    <div class="card-header">
-      <span class="card-title"><svg class="li"><use href="#i-trophy"/></svg> Участие в турнирах и играх</span>
+  <div style="margin: 24px 0 8px;">
+    <div style="font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <svg class="li" style="width:22px;height:22px;color:var(--accent);"><use href="#i-trophy"/></svg> Участие в турнирах и играх
     </div>
-    <div style="padding: 16px;">
-      <div id="profileHistoryTabs" style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">
-        <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Турниры</button>
-        <button data-tab="games" onclick="setProfileHistoryTab('games')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Игры</button>
-      </div>
-      <div id="profileHistoryList"></div>
-      <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
+    <div id="profileHistoryTabs" style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:14px;">
+      <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="flex:1;padding:6px 0;font-size:13px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Турниры</button>
+      <button data-tab="games" onclick="setProfileHistoryTab('games')" style="flex:1;padding:6px 0;font-size:13px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Игры</button>
     </div>
+    <div id="profileHistoryList"></div>
+    <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
   </div>
 </section>
 
@@ -3965,22 +3971,18 @@ function profileGameCard(g) {
   const d = getGameDisplayOrder(g);
   const score = (d.scores1First && d.scores1First.length) ? d.scores1First.map(s => `${s.score1}:${s.score2}`).join(' · ') : '–';
   return `
-    <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;cursor:pointer;" onclick="openProfileGame('${g.id}')">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <div style="flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div class="match-avatars">${(d.pair1First || []).map(profileMiniAvatar).join('')}</div>
-            <div style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--success);">${gamePairNamesWithDelta(g, d.pair1First)}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:5px;">
-            <div class="match-avatars">${(d.pair2First || []).map(profileMiniAvatar).join('')}</div>
-            <div style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${gamePairNamesWithDelta(g, d.pair2First)}</div>
-          </div>
-        </div>
-        <div style="flex-shrink:0;text-align:right;">
-          <div style="font-size:17px;font-weight:700;color:var(--accent);line-height:1.1;">${score}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;"><svg class="li"><use href="#i-tennis"/></svg> ${date}</div>
-        </div>
+    <div class="card" style="padding:10px 12px;margin-bottom:10px;cursor:pointer;" onclick="openProfileGame('${g.id}')">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="match-avatars">${(d.pair1First || []).map(profileMiniAvatar).join('')}</div>
+        <div class="game-pair-names" style="color:var(--success);">${gamePairNamesWithDelta(g, d.pair1First)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <div class="match-avatars">${(d.pair2First || []).map(profileMiniAvatar).join('')}</div>
+        <div class="game-pair-names">${gamePairNamesWithDelta(g, d.pair2First)}</div>
+      </div>
+      <div class="game-card-footer" style="justify-content:space-between;">
+        <span style="font-size:12px; color:var(--text-muted);"><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
+        <span style="font-size:16px; font-weight:700; color:var(--accent); line-height:1.1;">${score}</span>
       </div>
     </div>`;
 }
@@ -7233,24 +7235,20 @@ function renderGames() {
       html += `
         <div class="card" style="padding: 10px 12px;">
           <div style="cursor: pointer;" onclick="openGame('${g.id}')">
-            <div style="display:flex; align-items:center; gap:10px;">
-              <div style="flex:1; min-width:0;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                  <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
-                  <div style="flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
-                </div>
-                <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
-                  <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
-                  <div style="flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${gamePairNamesWithDelta(g, displayOrder.pair2First)}</div>
-                </div>
-              </div>
-              <div style="flex-shrink:0; text-align:right;">
-                <div style="font-size:17px; font-weight:700; color:var(--accent); line-height:1.1;">${scoreDisplay || '–'}</div>
-                <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
-                  <span style="font-size:12px; color: var(--text-muted);"><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
-                  <span class="status-badge ${statusClass}">${statusText}</span>
-                  ${canEdit(g) ? `<span style="cursor: pointer; font-size:14px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
-                </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
+              <div class="game-pair-names" style="${isFinished ? 'color: var(--success);' : ''}">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+              <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
+              <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair2First)}</div>
+            </div>
+            <div class="game-card-footer" style="display:block; text-align:center; margin-top:8px; padding-top:7px;">
+              <div style="font-size:15px; font-weight:700; color:var(--accent); line-height:1.2;">${scoreDisplay || '–'}</div>
+              <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:3px; font-size:11px; color: var(--text-muted);">
+                <span><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
+                <span class="status-badge ${statusClass}" style="font-size:10px; padding:1px 6px;">${statusText}</span>
+                ${canEdit(g) ? `<span style="cursor: pointer; font-size:13px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
               </div>
             </div>
             ${isFinished && g.photo ? `<div style="margin-top: 8px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
