@@ -850,6 +850,8 @@
   .player-avatar-mini { width: 24px !important; height: 24px !important; min-width: 24px; margin-right: 0; font-size: 11px !important; }
   /* Группа мини-аватарок пары в карточке матча: минимальный зазор между аватарками (отступ до ФИО задаёт gap строки) */
   .match-avatars { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+  .match-avatars .player-avatar-mini + .player-avatar-mini { margin-left: -9px; }
+  .match-avatars .player-avatar-mini { box-shadow: 0 0 0 2px var(--bg-card); }
 
   @media (max-width: 768px) {
     .player-avatar { width: 28px; height: 28px; margin-right: 8px; font-size: 12px; }
@@ -858,6 +860,13 @@
   .profile-avatar-row { display: flex; align-items: center; gap: 14px; padding: 8px 0 16px; border-bottom: 1px solid var(--border); }
   .profile-avatar-img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
   .profile-avatar-placeholder { display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; color: #fff; font-size: 24px; font-weight: 700; }
+
+  /* Публичный профиль: фото 4x от аватара в таблице игроков (32px → 128px) */
+  .profile-public-avatar-img { width: 128px; height: 128px; border-radius: 50%; object-fit: cover; border: 3px solid var(--accent); flex-shrink: 0; }
+  .profile-public-avatar-ph { display: inline-flex; align-items: center; justify-content: center; width: 128px; height: 128px; border-radius: 50%; color: #fff; font-size: 44px; font-weight: 700; flex-shrink: 0; }
+  @media (max-width: 768px) {
+    .profile-public-avatar-img, .profile-public-avatar-ph { width: 112px; height: 112px; font-size: 38px; }
+  }
 
   .avatar-viewer {
     position: fixed;
@@ -1986,43 +1995,54 @@
 <!-- Profile Section -->
 <section class="section" id="section-profile">
   <h2 class="section-title"><svg class="li"><use href="#i-user"/></svg> Профиль</h2>
-  <p class="section-subtitle">Ваши данные и настройки</p>
+  <p class="section-subtitle">Публичный профиль игрока</p>
 
-  <div class="card" style="max-width: 500px; margin: 24px auto;">
-    <div class="card-header">
-      <span class="card-title">Личная информация</span>
-    </div>
-    <div id="profileContent" style="padding: 16px;">
-      <div style="text-align: center; padding: 20px; color: var(--text-muted);">
-        Загрузка...
-      </div>
+  <!-- Шапка: фото, ФИО, рейтинги + кнопка настроек -->
+  <div class="card" style="max-width: 600px; margin: 24px auto; position: relative;">
+    <button class="btn btn-secondary" onclick="openProfileSettingsModal()" title="Настройки"
+      style="position:absolute; top:12px; right:12px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;">
+      <svg class="li"><use href="#i-settings"/></svg>
+    </button>
+    <div id="publicProfileContent" style="padding: 16px;">
+      <div style="text-align: center; padding: 20px; color: var(--text-muted);">Загрузка...</div>
     </div>
   </div>
 
-  <div class="card" style="max-width: 500px; margin: 24px auto;">
+  <!-- Статистика встреч (как на главной, без детализации по соперникам) -->
+  <div class="card" id="profileStatsCard" style="max-width: 600px; margin: 24px auto; display:none;">
     <div class="card-header">
-      <span class="card-title"><svg class="li"><use href="#i-lock"/></svg> Безопасность</span>
+      <span class="card-title"><svg class="li"><use href="#i-chart"/></svg> Статистика встреч</span>
     </div>
-    <div style="padding: 16px;">
-      <button class="btn btn-secondary" style="width:100%;" onclick="openChangePasswordModal()">
-        Сменить пароль
-      </button>
-    </div>
+    <div id="profileStatsContent" style="padding: 16px;"></div>
   </div>
 
-  <div class="card" style="max-width: 500px; margin: 24px auto;">
+  <!-- История участия: Турниры | Игры -->
+  <div class="card" style="max-width: 600px; margin: 24px auto;">
     <div class="card-header">
-      <span class="card-title"><svg class="li"><use href="#i-palette"/></svg> Оформление</span>
+      <span class="card-title"><svg class="li"><use href="#i-trophy"/></svg> Участие в турнирах и играх</span>
     </div>
     <div style="padding: 16px;">
-      <div style="display: flex; gap: 10px;">
-        <button class="btn btn-secondary" id="themeBtnDark" style="flex:1;" onclick="setTheme('dark')"><svg class="li"><use href="#i-moon"/></svg> Классика</button>
-        <button class="btn btn-secondary" id="themeBtnLight" style="flex:1;" onclick="setTheme('light')"><svg class="li"><use href="#i-sun"/></svg> Светлый день</button>
+      <div id="profileHistoryTabs" style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">
+        <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Турниры</button>
+        <button data-tab="games" onclick="setProfileHistoryTab('games')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Игры</button>
       </div>
-      <p style="font-size: 12px; color: var(--text-muted); margin-top: 10px; margin-bottom: 0;">Тема сохраняется на этом устройстве.</p>
+      <div id="profileHistoryList"></div>
+      <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
     </div>
   </div>
 </section>
+
+<div class="modal-overlay" id="profileSettingsModal" onclick="if(event.target===this)closeProfileSettingsModal()">
+  <div class="modal" style="max-width: 500px;">
+    <div class="modal-header">
+      <span class="modal-title"><svg class="li"><use href="#i-settings"/></svg> Настройки профиля</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeProfileSettingsModal()"><svg class="li"><use href="#i-x"/></svg></button>
+    </div>
+    <div id="profileSettingsContent" style="padding: 20px; max-height: 75vh; overflow-y: auto;">
+      <div style="text-align:center; padding:12px; color:var(--text-muted);">Загрузка...</div>
+    </div>
+  </div>
+</div>
 
 <section class="section" id="section-admin">
   <h2 class="section-title">Панель управления</h2>
@@ -3603,8 +3623,9 @@ function toggleMobileMenu() {
 // ============================================
 // PROFILE
 // ============================================
-async function renderProfile() {
-  const container = document.getElementById('profileContent');
+async function renderProfileSettings() {
+  const container = document.getElementById('profileSettingsContent');
+  if (!container) return;
   if (!currentUser) {
     container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Войдите, чтобы просмотреть профиль</div>';
     return;
@@ -3667,8 +3688,6 @@ async function renderProfile() {
         </div>
         <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" onchange="onAvatarFileSelected(event)">` : '';
     const rating = playerData ? (typeof playerData.rating === 'number' ? playerData.rating : 100) : '-';
-    const medals = playerData ? playerData.medals : { gold: 0, silver: 0, bronze: 0 };
-    const medalStr = formatMedals(medals);
 
     const firstName = userData.firstName || '';
     const lastName = userData.lastName || '';
@@ -3687,10 +3706,6 @@ async function renderProfile() {
         <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
           <span style="color:var(--text-muted); font-size:14px;">Рейтинг</span>
           <span style="font-weight:700; color:var(--accent);">${rating}</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-muted); font-size:14px;">Медали</span>
-          <span style="font-weight:600;">${medalStr || '<span style="color:var(--text-muted)">-</span>'}</span>
         </div>
         <div style="padding:8px 0; border-bottom:1px solid var(--border);">
           <label style="display:block; color:var(--text-muted); font-size:14px; margin-bottom:6px;">Имя <span style="color:var(--danger);">*</span></label>
@@ -3722,12 +3737,307 @@ async function renderProfile() {
           <input type="number" step="0.01" class="form-input" id="profileLundaRating" value="${escapeHtml(lundaRating)}" placeholder="100.00" min="1" style="width:100%;">
         </div>
         <button class="btn btn-primary" style="width:100%; margin-top:8px;" onclick="saveProfile()"><svg class="li"><use href="#i-save"/></svg> Сохранить изменения</button>
+        <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:10px;"><svg class="li"><use href="#i-lock"/></svg> Безопасность</div>
+          <button class="btn btn-secondary" style="width:100%;" onclick="openChangePasswordModal()">Сменить пароль</button>
+        </div>
+        <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:10px;"><svg class="li"><use href="#i-palette"/></svg> Оформление</div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-secondary" id="themeBtnDark" style="flex:1;" onclick="setTheme('dark')"><svg class="li"><use href="#i-moon"/></svg> Классика</button>
+            <button class="btn btn-secondary" id="themeBtnLight" style="flex:1;" onclick="setTheme('light')"><svg class="li"><use href="#i-sun"/></svg> Светлый день</button>
+          </div>
+          <p style="font-size:12px; color:var(--text-muted); margin-top:10px; margin-bottom:0;">Тема сохраняется на этом устройстве.</p>
+        </div>
       </div>
     `;
+    updateThemeButtons();
   } catch (e) {
     console.error("Profile render error:", e);
     container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Ошибка загрузки профиля</div>';
   }
+}
+
+// ============================================
+// ПУБЛИЧНЫЙ ПРОФИЛЬ (просмотр) + НАСТРОЙКИ (модалка)
+// ============================================
+let profStatsFilter = 'all'; // all | tournaments | games
+let profHistoryTab = 'tournaments'; // tournaments | games
+let profHistoryLimit = 10;
+let profCurrentPid = null;
+
+async function renderProfile() {
+  await renderPublicProfile();
+  const modal = document.getElementById('profileSettingsModal');
+  if (modal && modal.classList.contains('show')) renderProfileSettings();
+}
+
+function openProfileSettingsModal() {
+  document.getElementById('profileSettingsModal').classList.add('show');
+  renderProfileSettings();
+}
+
+function closeProfileSettingsModal() {
+  document.getElementById('profileSettingsModal').classList.remove('show');
+}
+
+async function renderPublicProfile() {
+  const container = document.getElementById('publicProfileContent');
+  const statsCard = document.getElementById('profileStatsCard');
+  if (!container) return;
+  if (!currentUser) {
+    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Войдите, чтобы просмотреть профиль</div>';
+    if (statsCard) statsCard.style.display = 'none';
+    return;
+  }
+
+  const userEmail = (currentUser.email || '').toLowerCase().trim();
+
+  try {
+    let userData = currentUserData;
+    let playerData = null;
+
+    if (userData && userData.playerId && Array.isArray(players)) {
+      const cached = players.find(p => p.id === userData.playerId);
+      if (cached) playerData = cached;
+    }
+    if (!userData) {
+      const userDoc = await db.collection("users").doc(userEmail).get();
+      if (!userDoc.exists) {
+        container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Профиль не найден</div>';
+        return;
+      }
+      userData = userDoc.data();
+    }
+    if (userData.playerId && !playerData) {
+      const playerDoc = await db.collection("padel_players").doc(userData.playerId).get();
+      if (playerDoc.exists) playerData = { id: playerDoc.id, ...playerDoc.data() };
+    }
+
+    profCurrentPid = (userData.playerId && playerData) ? userData.playerId : null;
+    const playerName = playerData
+      ? (playerData.name || '-')
+      : (((userData.lastName || '') + ' ' + (userData.firstName || '')).trim() || '-');
+    const initial = escapeHtml(String(playerName).trim().charAt(0).toUpperCase());
+    const rating = (playerData && typeof playerData.rating === 'number') ? playerData.rating : null;
+    const lunda = userData.lundaRating || (playerData && playerData.lundaRating) || null;
+    const medalHtml = (playerData && playerData.medals) ? formatMedals(playerData.medals) : '';
+
+    container.innerHTML = `
+      <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
+        ${playerData && playerData.avatar
+          ? `<img class="profile-public-avatar-img" src="${playerData.avatar}" alt="${escapeHtml(playerName)}" onclick="openPhotoViewer('${playerData.avatar}', '${escapeHtml(playerName)}')">`
+          : `<span class="profile-public-avatar-ph" style="background:${avatarColor(playerName)};">${initial}</span>`}
+        <div style="flex:1; min-width:180px;">
+          <div style="font-size:20px; font-weight:700; line-height:1.25;">${escapeHtml(playerName)}</div>
+          <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+            <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; background:var(--bg-secondary); border:1px solid var(--border); font-size:13px; color:var(--text-muted);">Рейтинг Сбер Падел&nbsp;<b style="color:var(--accent); font-size:15px;">${rating !== null ? rating : '—'}</b></span>
+            <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; background:var(--bg-secondary); border:1px solid var(--border); font-size:13px; color:var(--text-muted);">LUNDA&nbsp;<b style="color:var(--text-primary); font-size:15px;">${lunda ? lunda : '—'}</b></span>
+          </div>
+          ${medalHtml ? `<div style="display:flex; align-items:center; gap:6px; margin-top:12px; flex-wrap:wrap; font-size:15px; line-height:1;">${medalHtml}</div>` : ''}
+        </div>
+      </div>`;
+
+    if (statsCard) {
+      statsCard.style.display = 'block';
+      renderProfileStats(profCurrentPid);
+    }
+    renderProfileHistory();
+  } catch (e) {
+    console.error("Public profile render error:", e);
+    container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Ошибка загрузки профиля</div>';
+  }
+}
+
+async function renderProfileStats(pid) {
+  const content = document.getElementById('profileStatsContent');
+  if (!content) return;
+  if (!pid) {
+    content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Профиль игрока не привязан к аккаунту</div>';
+    return;
+  }
+  content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
+  try {
+    await ensureH2hGames();
+    const rows = computePlayerH2H(pid, profStatsFilter, 'opponents');
+    const filterBtn = (f, label) => `<button onclick="setProfileStatsFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${profStatsFilter === f ? 'var(--accent)' : 'transparent'};color:${profStatsFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${profStatsFilter === f ? '600' : '400'};">${label}</button>`;
+    const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
+    if (!rows.length) {
+      content.innerHTML = filterTabs + '<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">Пока нет завершённых встреч</div>';
+      return;
+    }
+    const totalG = rows.reduce((a, r) => a + r.g, 0);
+    const totalW = rows.reduce((a, r) => a + r.w, 0);
+    const totalD = rows.reduce((a, r) => a + (r.d || 0), 0);
+    const totalL = rows.reduce((a, r) => a + r.l, 0);
+    const pct = v => { const p = Math.round(v * 1000) / 10; return (Number.isInteger(p) ? String(p) : p.toFixed(1)) + '%'; };
+    const statBox = (k, v, color) => `<div style="flex:1;min-width:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;">
+      <div style="font-size:11px;color:var(--text-muted);">${k}</div>
+      <div style="font-size:16px;font-weight:700;line-height:1.2;${color || ''}">${v}</div></div>`;
+    content.innerHTML = filterTabs
+      + `<div style="display:flex;gap:8px;margin-bottom:8px;">${statBox('Игр', totalG)}${statBox('Соперников', rows.length)}${statBox('Винрейт', pct(totalG ? (totalW + 0.5 * totalD) / totalG : 0))}</div>`
+      + `<div style="display:flex;gap:8px;">${statBox('Побед', totalW, 'color:var(--success);')}${statBox('Ничьих', totalD)}${statBox('Поражений', totalL, 'color:var(--danger);')}</div>`;
+  } catch (e) {
+    console.error('Profile stats error:', e);
+    content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Не удалось загрузить статистику</div>';
+  }
+}
+
+function setProfileStatsFilter(f) {
+  if (profStatsFilter === f) return;
+  profStatsFilter = f;
+  if (profCurrentPid) renderProfileStats(profCurrentPid);
+}
+
+// ---------- История участия: Турниры | Игры ----------
+function profileParticipatesInTournament(t, pid) {
+  if (!pid) return false;
+  if ((t.playerIds || []).includes(pid)) return true;
+  if ((t.slots || []).some(s => s.playerId === pid)) return true;
+  if (t.type === 'roundrobin' && (t.pairs || []).some(pr => Array.isArray(pr) && pr.includes(pid))) return true;
+  return false;
+}
+
+function profileMiniAvatar(pid) {
+  const p = players.find(x => x.id === pid);
+  if (!p) return '';
+  return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar player-avatar-mini"');
+}
+
+function profileTournamentPlace(t, pid) {
+  const lb = (t.leaderboard || []).map(e => e.playerId);
+  if (lb.length) {
+    const i = lb.indexOf(pid);
+    return i >= 0 ? i + 1 : 0;
+  }
+  if (t.winners) {
+    for (const k of [1, 2, 3]) { if (t.winners[k] === pid) return k; }
+  }
+  return 0;
+}
+
+function profileTournamentCard(t, pid) {
+  const date = t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-';
+  const typeName = t.type === 'roundrobin' ? 'Раунд-робин' : 'Американо';
+  const totalSlots = t.totalSlots || (t.playerIds ? t.playerIds.length : 0);
+  const bookedCount = (t.slots && t.slots.length)
+    ? t.slots.filter(s => s.playerId).length
+    : (t.playerIds ? t.playerIds.length : 0);
+  const place = pid ? profileTournamentPlace(t, pid) : 0;
+  const placeColor = place === 1 ? '#e6a817' : place === 2 ? '#a9b2bd' : place === 3 ? '#cd7f32' : 'var(--text-primary)';
+  return `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;" onclick="openTournament('${t.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${escapeHtml(t.name)}</div>
+          <div style="font-size:13px;color:var(--text-muted);">
+            <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}</span>
+            <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}</span>
+            <span class="nowrap-param"><svg class="li"><use href="#i-users"/></svg> ${bookedCount}/${totalSlots}</span>
+            <span class="nowrap-param"><svg class="li"><use href="#i-trophy"/></svg> ${typeName}</span>
+          </div>
+        </div>
+        <div style="flex-shrink:0;text-align:center;min-width:56px;">
+          <div style="font-size:26px;font-weight:800;color:${placeColor};line-height:1;">${place > 0 ? place : '—'}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">место</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ФИО игрока + дельта рейтинга за игру в скобках (g.ratingChanges из функций)
+function gameNameDelta(g, pid) {
+  const nm = escapeHtml(getPlayerNameById(pid));
+  const rc = g && g.ratingChanges;
+  if (rc && typeof rc[pid] === 'number') {
+    const d = Math.round(rc[pid]);
+    return `${nm}&nbsp;<span style="font-weight:600;font-size:12px;color:${d >= 0 ? 'var(--success)' : 'var(--danger)'};">(${d >= 0 ? '+' : '-'}${Math.abs(d)})</span>`;
+  }
+  return nm;
+}
+
+function gamePairNamesWithDelta(g, pair) {
+  return (pair || []).map(pid => gameNameDelta(g, pid)).join(' | ') || '?';
+}
+
+function profileGameCard(g) {
+  const date = g.date ? new Date(g.date).toLocaleDateString('ru-RU') : '-';
+  const d = getGameDisplayOrder(g);
+  const score = (d.scores1First && d.scores1First.length) ? d.scores1First.map(s => `${s.score1}:${s.score2}`).join(' · ') : '–';
+  return `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;cursor:pointer;" onclick="openProfileGame('${g.id}')">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="match-avatars">${(d.pair1First || []).map(profileMiniAvatar).join('')}</div>
+            <div style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--success);">${gamePairNamesWithDelta(g, d.pair1First)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:5px;">
+            <div class="match-avatars">${(d.pair2First || []).map(profileMiniAvatar).join('')}</div>
+            <div style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${gamePairNamesWithDelta(g, d.pair2First)}</div>
+          </div>
+        </div>
+        <div style="flex-shrink:0;text-align:right;">
+          <div style="font-size:17px;font-weight:700;color:var(--accent);line-height:1.1;">${score}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px;"><svg class="li"><use href="#i-tennis"/></svg> ${date}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderProfileHistory() {
+  const listEl = document.getElementById('profileHistoryList');
+  const moreBtn = document.getElementById('profileHistoryMore');
+  if (!listEl) return;
+  document.querySelectorAll('#profileHistoryTabs button').forEach(b => {
+    const on = b.dataset.tab === profHistoryTab;
+    b.style.background = on ? 'var(--accent)' : 'transparent';
+    b.style.color = on ? '#fff' : 'var(--text-muted)';
+    b.style.fontWeight = on ? '600' : '400';
+  });
+  const pid = profCurrentPid;
+  let items = [];
+  if (profHistoryTab === 'tournaments') {
+    items = (tournaments || [])
+      .filter(t => t.status === 'finished' && profileParticipatesInTournament(t, pid))
+      .map(t => ({ sort: t.date || '', html: profileTournamentCard(t, pid) }));
+  } else {
+    items = (h2hGamesAll || [])
+      .filter(g => pid && ((g.pair1 || []).includes(pid) || (g.pair2 || []).includes(pid)))
+      .map(g => ({ sort: g.date || '', html: profileGameCard(g) }));
+  }
+  items.sort((a, b) => (b.sort || '').localeCompare(a.sort || ''));
+  if (!items.length) {
+    listEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-muted);font-size:13px;">${profHistoryTab === 'tournaments' ? 'Пока нет турниров с участием игрока' : 'Пока нет завершённых игр с участием игрока'}</div>`;
+    if (moreBtn) moreBtn.style.display = 'none';
+    return;
+  }
+  const visible = items.slice(0, profHistoryLimit);
+  listEl.innerHTML = visible.map(i => i.html).join('');
+  if (moreBtn) moreBtn.style.display = items.length > profHistoryLimit ? '' : 'none';
+}
+
+function setProfileHistoryTab(t) {
+  if (profHistoryTab === t) return;
+  profHistoryTab = t;
+  profHistoryLimit = 10;
+  renderProfileHistory();
+}
+
+function profileShowMore() {
+  profHistoryLimit += 10;
+  renderProfileHistory();
+}
+
+// Карточки игр в профиле берутся из полной подписки h2hGamesAll (без пагинации
+// раздела «Игры») — если игры нет в локальном массиве games, подкладываем её туда.
+function openProfileGame(id) {
+  let g = games.find(x => x.id === id);
+  if (!g && Array.isArray(h2hGamesAll)) {
+    g = h2hGamesAll.find(x => x.id === id);
+    if (g) games.unshift(g);
+  }
+  if (g) openGame(id);
 }
 
 async function saveProfile() {
@@ -6914,9 +7224,6 @@ function renderGames() {
         if (!p) return '';
         return renderAvatarHtml(p).replace('class="player-avatar"', 'class="player-avatar player-avatar-mini"');
       };
-      const pair1Names = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
-      const pair2Names = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join(' | ') || '?';
-
       // Счёт по сетам — одной строкой, единый шрифт (+30% к текущему 14px)
       let scoreDisplay = '';
       if (displayOrder.scores1First && displayOrder.scores1First.length > 0) {
@@ -6924,25 +7231,29 @@ function renderGames() {
       }
 
       html += `
-        <div class="card" style="padding: 12px 14px;">
+        <div class="card" style="padding: 10px 12px;">
           <div style="cursor: pointer;" onclick="openGame('${g.id}')">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
-              <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${escapeHtml(pair1Names)}</div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="flex:1; min-width:0;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
+                  <div style="flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${isFinished ? 'color: var(--success);' : ''}">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                  <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
+                  <div style="flex:1; min-width:0; font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${gamePairNamesWithDelta(g, displayOrder.pair2First)}</div>
+                </div>
+              </div>
+              <div style="flex-shrink:0; text-align:right;">
+                <div style="font-size:17px; font-weight:700; color:var(--accent); line-height:1.1;">${scoreDisplay || '–'}</div>
+                <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:4px;">
+                  <span style="font-size:12px; color: var(--text-muted);"><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
+                  <span class="status-badge ${statusClass}">${statusText}</span>
+                  ${canEdit(g) ? `<span style="cursor: pointer; font-size:14px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+                </div>
+              </div>
             </div>
-            <div style="display:flex; align-items:center; gap:8px; margin-top: 3px;">
-              <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
-              <div style="flex:1; min-width:0; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pair2Names)}</div>
-            </div>
-            <div style="text-align:center; margin-top:6px; font-size:18px; font-weight:700; color:var(--accent);">${scoreDisplay || '–'}</div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-              <span style="font-size: 13px; color: var(--text-muted);"><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
-              <span style="display: inline-flex; align-items: center; gap: 8px;">
-                <span class="status-badge ${statusClass}">${statusText}</span>
-                ${canEdit(g) ? `<span style="cursor: pointer; font-size: 16px; padding: 2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
-              </span>
-            </div>
-            ${isFinished && g.photo ? `<div style="margin-top: 10px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
+            ${isFinished && g.photo ? `<div style="margin-top: 8px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
           </div>
         </div>
       `;
