@@ -1453,6 +1453,10 @@
       height: 56px;
     }
 
+    #profileHistoryRow { flex-direction: column; }
+    #profileHistoryTabs { position: static !important; flex: 0 0 auto !important; flex-direction: row !important; width: 100%; }
+    #profileHistoryTabs button { justify-content: center; }
+
     .score-grid {
       grid-template-columns: repeat(4, 1fr);
       gap: 6px;
@@ -1822,12 +1826,11 @@
       SBER <span>PADEL</span> TOUR
     </a>
     <nav class="nav" id="desktopNav">
-      <button class="nav-btn active" data-section="home" onclick="showSection('home')">Главная</button>
+      <button class="nav-btn active" data-section="home" onclick="showSection('home')">Профиль</button>
       <button class="nav-btn" data-section="players" onclick="showSection('players')">Игроки</button>
       <button class="nav-btn" data-section="tournaments" onclick="showSection('tournaments')">Турниры</button>
       <button class="nav-btn" data-section="games" onclick="showSection('games')">Игры</button>
       <button class="nav-btn" data-section="trainings" onclick="showSection('trainings')">Тренировки</button>
-      <button class="nav-btn hidden" data-section="profile" id="profileNavBtn" onclick="showSection('profile')">Профиль</button>
       <button class="nav-btn hidden" data-section="admin" id="adminNavBtn" onclick="showSection('admin')">Управление</button>
     </nav>
     <div class="user-info" id="userInfo">
@@ -1839,8 +1842,8 @@
 <!-- Bottom Mobile Nav -->
 <nav class="bottom-nav" id="bottomNav">
   <button class="nav-btn active" data-section="home" onclick="showSection('home')">
-    <span class="icon"><svg class="li"><use href="#i-house"/></svg></span>
-    <span>Главная</span>
+    <span class="icon"><svg class="li"><use href="#i-user"/></svg></span>
+    <span>Профиль</span>
   </button>
   <button class="nav-btn" data-section="players" onclick="showSection('players')">
     <span class="icon"><svg class="li"><use href="#i-users"/></svg></span>
@@ -1857,10 +1860,6 @@
   <button class="nav-btn" data-section="trainings" onclick="showSection('trainings')">
     <span class="icon"><svg class="li"><use href="#i-dumbbell"/></svg></span>
     <span>Тренировки</span>
-  </button>
-  <button class="nav-btn hidden" data-section="profile" id="profileBottomNavBtn" onclick="showSection('profile')">
-    <span class="icon"><svg class="li"><use href="#i-user"/></svg></span>
-    <span>Профиль</span>
   </button>
   <button class="nav-btn hidden" data-section="admin" id="adminBottomNavBtn" onclick="showSection('admin')">
     <span class="icon"><svg class="li"><use href="#i-settings"/></svg></span>
@@ -1904,11 +1903,39 @@
 
   <!-- Главная для залогиненных: персональная статистика (бывшие «Личные встречи» из Профиля) -->
   <div id="homePersonal" style="display:none;">
-    <div class="card" style="max-width: 500px; margin: 24px auto; display:none;" id="h2hHomeCard">
-      <div class="card-header">
-        <span class="card-title"><svg class="li"><use href="#i-swords"/></svg> Персональная статистика</span>
+    <!-- 1. Шапка: фото, ФИО, рейтинги, медали + настройки -->
+    <div class="card" style="max-width: 600px; margin: 24px auto 16px; position: relative;">
+      <button class="btn btn-secondary" onclick="openProfileSettingsModal()" title="Настройки"
+        style="position:absolute; top:12px; right:12px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;">
+        <svg class="li"><use href="#i-settings"/></svg>
+      </button>
+      <div id="publicProfileContent" style="padding: 16px;">
+        <div style="text-align: center; padding: 20px; color: var(--text-muted);">Загрузка...</div>
       </div>
+    </div>
+
+    <!-- 2. Статистика встреч (без заголовка) -->
+    <div class="card" id="profileStatsCard" style="max-width: 600px; margin: 16px auto; display:none;">
+      <div id="profileStatsContent" style="padding: 16px;"></div>
+    </div>
+
+    <!-- 3. Статистика по соперникам/напарникам: переключатель сверху, затем диаграмма и таблица -->
+    <div class="card" style="max-width: 600px; margin: 16px auto; display:none;" id="h2hHomeCard">
       <div id="h2hHomeContent" style="padding: 16px;"></div>
+    </div>
+
+    <!-- 4. Участие в турнирах и играх (без заголовка): вкладки колонкой слева -->
+    <div style="margin: 24px 0 8px;">
+      <div id="profileHistoryRow" style="display:flex;gap:16px;align-items:flex-start;">
+        <div id="profileHistoryTabs" style="flex:0 0 170px;display:flex;flex-direction:column;gap:8px;position:sticky;top:14px;">
+          <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="width:100%;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><svg class="li"><use href="#i-trophy"/></svg> Турниры</button>
+          <button data-tab="games" onclick="setProfileHistoryTab('games')" style="width:100%;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><svg class="li"><use href="#i-tennis"/></svg> Игры</button>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div id="profileHistoryList"></div>
+          <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -2001,43 +2028,6 @@
 
 <!-- Admin Section -->
 <!-- Profile Section -->
-<section class="section" id="section-profile">
-  <h2 class="section-title"><svg class="li"><use href="#i-user"/></svg> Профиль</h2>
-  <p class="section-subtitle">Публичный профиль игрока</p>
-
-  <!-- Шапка: фото, ФИО, рейтинги + кнопка настроек -->
-  <div class="card" style="max-width: 600px; margin: 24px auto; position: relative;">
-    <button class="btn btn-secondary" onclick="openProfileSettingsModal()" title="Настройки"
-      style="position:absolute; top:12px; right:12px; width:36px; height:36px; padding:0; display:flex; align-items:center; justify-content:center;">
-      <svg class="li"><use href="#i-settings"/></svg>
-    </button>
-    <div id="publicProfileContent" style="padding: 16px;">
-      <div style="text-align: center; padding: 20px; color: var(--text-muted);">Загрузка...</div>
-    </div>
-  </div>
-
-  <!-- Статистика встреч (как на главной, без детализации по соперникам) -->
-  <div class="card" id="profileStatsCard" style="max-width: 600px; margin: 24px auto; display:none;">
-    <div class="card-header">
-      <span class="card-title"><svg class="li"><use href="#i-chart"/></svg> Статистика встреч</span>
-    </div>
-    <div id="profileStatsContent" style="padding: 16px;"></div>
-  </div>
-
-  <!-- История участия: Турниры | Игры -->
-  <div style="margin: 24px 0 8px;">
-    <div style="font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-      <svg class="li" style="width:22px;height:22px;color:var(--accent);"><use href="#i-trophy"/></svg> Участие в турнирах и играх
-    </div>
-    <div id="profileHistoryTabs" style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:14px;">
-      <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="flex:1;padding:6px 0;font-size:13px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Турниры</button>
-      <button data-tab="games" onclick="setProfileHistoryTab('games')" style="flex:1;padding:6px 0;font-size:13px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Игры</button>
-    </div>
-    <div id="profileHistoryList"></div>
-    <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
-  </div>
-</section>
-
 <div class="modal-overlay" id="profileSettingsModal" onclick="if(event.target===this)closeProfileSettingsModal()">
   <div class="modal" style="max-width: 500px;">
     <div class="modal-header">
@@ -3472,9 +3462,6 @@ function updateUI() {
   const adminNavBtn = document.getElementById('adminNavBtn');
   const adminMobileNavBtn = document.getElementById('adminMobileNavBtn');
   const adminBottomNavBtn = document.getElementById('adminBottomNavBtn');
-  const profileNavBtn = document.getElementById('profileNavBtn');
-  const profileMobileNavBtn = document.getElementById('profileMobileNavBtn');
-  const profileBottomNavBtn = document.getElementById('profileBottomNavBtn');
 
   if (currentUser) {
     // Получаем имя пользователя из Firestore
@@ -3516,16 +3503,11 @@ function updateUI() {
 
     userInfo.innerHTML = `
       <span class="user-name">${currentUser.email}</span>
-      <button class="header-avatar" id="headerAvatarBtn" onclick="showSection('profile')" title="Профиль">
+      <button class="header-avatar" id="headerAvatarBtn" onclick="showSection('home')" title="Профиль">
         <span class="header-avatar-placeholder" style="background:#666">?</span>
       </button>
       <button class="btn btn-secondary btn-sm" onclick="signOut()">Выйти</button>
     `;
-
-    // Profile buttons: visible for all authenticated users
-    if (profileNavBtn) profileNavBtn.classList.remove('hidden');
-    if (profileMobileNavBtn) profileMobileNavBtn.classList.remove('hidden');
-    if (profileBottomNavBtn) profileBottomNavBtn.classList.remove('hidden');
 
     // Create tournament button: visible for logged-in users
     const createTournamentBtn = document.getElementById('createTournamentMainBtn');
@@ -3562,9 +3544,6 @@ function updateUI() {
     if (adminNavBtn) adminNavBtn.classList.add('hidden');
     if (adminMobileNavBtn) adminMobileNavBtn.classList.add('hidden');
     if (adminBottomNavBtn) adminBottomNavBtn.classList.add('hidden');
-    if (profileNavBtn) profileNavBtn.classList.add('hidden');
-    if (profileMobileNavBtn) profileMobileNavBtn.classList.add('hidden');
-    if (profileBottomNavBtn) profileBottomNavBtn.classList.add('hidden');
 
     // Create tournament button: hidden when not logged in
     const createTournamentBtn = document.getElementById('createTournamentMainBtn');
@@ -3606,9 +3585,6 @@ function showSection(section) {
   }
   if (section === 'players') {
     renderPlayers();
-  }
-  if (section === 'profile') {
-    renderProfile();
   }
   if (section === 'trainings') {
     renderTrainings();
@@ -3890,6 +3866,7 @@ function setProfileStatsFilter(f) {
   if (profStatsFilter === f) return;
   profStatsFilter = f;
   if (profCurrentPid) renderProfileStats(profCurrentPid);
+  renderHomeStats();
 }
 
 // ---------- История участия: Турниры | Игры ----------
@@ -3928,8 +3905,14 @@ function profileTournamentCard(t, pid) {
     : (t.playerIds ? t.playerIds.length : 0);
   const place = pid ? profileTournamentPlace(t, pid) : 0;
   const placeColor = place === 1 ? '#e6a817' : place === 2 ? '#a9b2bd' : place === 3 ? '#cd7f32' : 'var(--text-primary)';
+  const photoHtml = t.photo
+    ? `<div style="margin:-12px -14px 10px;" onclick="event.stopPropagation();openPhotoViewer('${t.photo}', '${escapeHtml(t.name || 'Турнир')}')">
+        <img src="${t.photoThumb || t.photo}" loading="lazy" alt="Фото с турнира" style="width:100%;max-height:220px;object-fit:cover;border-radius:10px 10px 0 0;display:block;cursor:zoom-in;">
+      </div>`
+    : '';
   return `
     <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;" onclick="openTournament('${t.id}')">
+      ${photoHtml}
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${escapeHtml(t.name)}</div>
@@ -5417,18 +5400,11 @@ function computePlayerH2H(pid, filter, mode) {
 
 let h2hHardestFirst = true;
 let h2hCurrentPid = null;
-let h2hFilter = 'all'; // all | tournaments | games
 let h2hMode = 'opponents'; // opponents | partners
 
 function setH2hMode(m) {
   if (h2hMode === m) return;
   h2hMode = m;
-  if (h2hCurrentPid) renderHomeH2h(h2hCurrentPid);
-}
-
-function setH2hFilter(f) {
-  if (h2hFilter === f) return;
-  h2hFilter = f;
   if (h2hCurrentPid) renderHomeH2h(h2hCurrentPid);
 }
 
@@ -5444,6 +5420,7 @@ function updateHomeZone() {
   const logged = !!currentUser;
   pub.style.display = logged ? 'none' : '';
   per.style.display = logged ? '' : 'none';
+  if (logged) renderProfile();
 }
 
 async function renderHomeStats() {
@@ -5479,30 +5456,24 @@ async function renderHomeH2h(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
-    const { rows, totals } = computePlayerH2H(pid, h2hFilter, h2hMode);
+    const { rows } = computePlayerH2H(pid, profStatsFilter, h2hMode);
     const isPartners = h2hMode === 'partners';
     const whoLabel = isPartners ? 'Напарник' : 'Соперник';
     const whoGen = isPartners ? 'Напарников' : 'Соперников';
     const whoDat = isPartners ? 'напарникам' : 'соперникам';
     const modeBtn = (m, label) => `<button onclick="setH2hMode('${m}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${h2hMode === m ? 'var(--accent)' : 'transparent'};color:${h2hMode === m ? '#fff' : 'var(--text-muted)'};font-weight:${h2hMode === m ? '600' : '400'};">${label}</button>`;
     const modeTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:8px;">${modeBtn('opponents', 'Соперники')}${modeBtn('partners', 'Напарники')}</div>`;
-    const filterBtn = (f, label) => `<button onclick="setH2hFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${h2hFilter === f ? 'var(--accent)' : 'transparent'};color:${h2hFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${h2hFilter === f ? '600' : '400'};">${label}</button>`;
-    const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
     if (!rows.length) {
-      const emptyTxt = h2hFilter === 'tournaments' ? (isPartners ? 'Пока нет совместных турнирных матчей' : 'Пока нет турнирных встреч') : h2hFilter === 'games' ? (isPartners ? 'Пока нет совместных игр' : 'Пока нет завершённых игр') : (isPartners ? 'Пока нет совместных матчей' : 'Пока нет завершённых встреч');
-      content.innerHTML = modeTabs + filterTabs + `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">${emptyTxt}</div>`;
+      const emptyTxt = profStatsFilter === 'tournaments' ? (isPartners ? 'Пока нет совместных турнирных матчей' : 'Пока нет турнирных встреч') : profStatsFilter === 'games' ? (isPartners ? 'Пока нет совместных игр' : 'Пока нет завершённых игр') : (isPartners ? 'Пока нет совместных матчей' : 'Пока нет завершённых встреч');
+      content.innerHTML = modeTabs + `<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">${emptyTxt}</div>`;
       return;
     }
-    const srcNote = h2hFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : h2hFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
-    const totalG = totals.g, totalW = totals.w, totalD = totals.d, totalL = totals.l;
+    const srcNote = profStatsFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : profStatsFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
     const hardest = rows.find(r => r.g >= 2) || null;
     const displayRows = h2hHardestFirst ? rows : rows.slice().reverse();
     const eligible = displayRows.filter(r => r.g >= 2);
 
     const pct = v => { const p = Math.round(v * 1000) / 10; return (Number.isInteger(p) ? String(p) : p.toFixed(1)) + '%'; };
-    const statBox = (k, v, color) => `<div style="flex:1;min-width:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;">
-      <div style="font-size:11px;color:var(--text-muted);">${k}</div>
-      <div style="font-size:16px;font-weight:700;line-height:1.2;${color || ''}">${v}</div></div>`;
 
     const bars = eligible.slice(0, 10).map(r => `
       <div style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px;">
@@ -5527,17 +5498,6 @@ async function renderHomeH2h(pid) {
 
     content.innerHTML = `
       ${modeTabs}
-      ${filterTabs}
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        ${statBox('Игр', totalG)}
-        ${statBox(whoGen, rows.length)}
-        ${statBox('Винрейт', pct(totalG ? (totalW + 0.5 * totalD) / totalG : 0))}
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:10px;">
-        ${statBox('Побед', totalW, 'color:var(--success);')}
-        ${statBox('Ничьих', totalD)}
-        ${statBox('Поражений', totalL, 'color:var(--danger);')}
-      </div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0 4px;">
         <div style="font-size:12px;color:var(--text-muted);">Винрейт по ${whoDat} (мин. 2 встречи)</div>
         <span style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
@@ -7851,7 +7811,7 @@ async function applyForPlannedGame(plannedGameId) {
   const userLastName = currentUserData?.lastName || '';
   if (!userFirstName.trim() || !userLastName.trim()) {
     showToast("Заполните имя и фамилию в профиле перед подачей заявки", "error");
-    showSection('profile');
+    showSection('home');
     return;
   }
 
@@ -10064,7 +10024,7 @@ async function bookTrainingSlot(trainingId) {
   const userLastName = currentUserData?.lastName || '';
   if (!userFirstName.trim() || !userLastName.trim()) {
     showToast("Заполните имя и фамилию в профиле перед записью", "error");
-    showSection('profile');
+    showSection('home');
     return;
   }
 
@@ -10127,7 +10087,7 @@ async function applyForTraining(trainingId) {
   const userLastName = currentUserData?.lastName || '';
   if (!userFirstName.trim() || !userLastName.trim()) {
     showToast("Заполните имя и фамилию в профиле перед подачей заявки", "error");
-    showSection('profile');
+    showSection('home');
     return;
   }
 
