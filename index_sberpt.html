@@ -3804,7 +3804,7 @@ async function renderPublicProfile() {
     container.innerHTML = `
       <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap;">
         ${playerData && playerData.avatar
-          ? `<img class="profile-public-avatar-img" src="${playerData.avatar}" alt="${escapeHtml(playerName)}" onclick="openPhotoViewer('${playerData.avatar}', '${escapeHtml(playerName)}')">`
+          ? `<img class="profile-public-avatar-img" src="${playerData.avatar}" alt="${escapeHtml(playerName)}" onclick="openPhotoViewer('${playerData.avatarFull || playerData.avatar}', '${escapeHtml(playerName)}')">`
           : `<span class="profile-public-avatar-ph" style="background:${avatarColor(playerName)};">${initial}</span>`}
         <div style="flex:1; min-width:180px;">
           <div style="font-size:20px; font-weight:700; line-height:1.25;">${escapeHtml(playerName)}</div>
