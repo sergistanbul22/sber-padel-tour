@@ -2805,6 +2805,9 @@ function applyTournamentsRows(rows) {
     if (data.scheduleData) {
       try { data.schedule = JSON.parse(data.scheduleData); } catch (e) { data.schedule = []; }
     }
+    if (data.scheduleRests) {
+      try { data.scheduleRests = JSON.parse(data.scheduleRests); } catch (e) { data.scheduleRests = []; }
+    }
     return data;
   });
   // Хронологическая сортировка ленты: идущие → предстоящие (ранние выше) → завершённые (свежие выше).
@@ -3894,7 +3897,7 @@ function profileTournamentPlace(t, pid) {
 
 function profileTournamentCard(t, pid) {
   const date = t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-';
-  const typeName = t.type === 'roundrobin' ? 'Раунд-робин' : 'Американо';
+  const typeName = tournamentTypeName(t.type);
   const totalSlots = t.totalSlots || (t.playerIds ? t.playerIds.length : 0);
   const bookedCount = (t.slots && t.slots.length)
     ? t.slots.filter(s => s.playerId).length
@@ -4535,7 +4538,7 @@ function renderTournaments() {
               <span class="card-title tournament-card-title">${escapeHtml(t.name)}</span>
             </div>
             <div style="font-size: 13px; color: var(--text-muted);">
-              <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}</span> <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}</span>${t.comment ? ' <span class="nowrap-param"><svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) + '</span>' : ''} <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${totalSlots} игроков</span> <span class="nowrap-param">${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка`}</span>
+              <span class="nowrap-param"><svg class="li"><use href="#i-calendar-days"/></svg> ${date}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''}</span> <span class="nowrap-param"><svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}</span>${t.comment ? ' <span class="nowrap-param"><svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) + '</span>' : ''} <span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${totalSlots} игроков</span> <span class="nowrap-param">${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : t.type === 'americanoflex' ? `<svg class="li"><use href="#i-globe"/></svg> Americano Flex · ${t.totalSlots || '?'} уч. · ${t.courts || 1} корт.` : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка`}</span>
               ${t.createdByName ? `<br><span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> Организатор: ${escapeHtml(t.createdByName)}</span>` : ''}
             </div>
           </div>
@@ -4584,7 +4587,7 @@ function openTournament(id) {
     <svg class="li"><use href="#i-calendar-days"/></svg> ${t.date ? new Date(t.date).toLocaleDateString('ru-RU') : '-'}${t.timeStart ? ' | ' + t.timeStart : ''}${t.timeEnd ? '–' + t.timeEnd : ''} ·
     <svg class="li"><use href="#i-map-pin"/></svg> ${escapeHtml(t.location || '—')}${t.comment ? ' · <svg class="li"><use href="#i-message"/></svg> ' + escapeHtml(t.comment) : ''} ·
     <svg class="li"><use href="#i-user"/></svg> ${bookedCount}/${t.totalSlots || t.playerIds?.length || 0} игроков ·
-    ${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка за матч`}
+    ${t.type === 'roundrobin' ? '<svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin' : t.type === 'americanoflex' ? `<svg class="li"><use href="#i-globe"/></svg> Americano Flex · ${t.totalSlots || '?'} уч. · ${t.courts || 1} корт.` : `<svg class="li"><use href="#i-globe"/></svg> Americano · ${t.pointsPerMatch || 24} очка за матч`}
     ${t.createdByName ? '<br><svg class="li"><use href="#i-user"/></svg> Организатор: ' + escapeHtml(t.createdByName) : ''}
   </div>`;
 
@@ -4756,6 +4759,12 @@ function openTournament(id) {
     t.schedule.forEach((round, rIdx) => {
       html += `<div class="round-card">`;
       html += `<div class="round-header"><span class="round-num">Раунд ${rIdx + 1}</span></div>`;
+      {
+        const restIdxs = (t.scheduleRests || [])[rIdx] || [];
+        if (restIdxs.length) {
+          html += `<div style="padding: 0 12px 8px; font-size: 12px; color: var(--text-muted);">Отдыхают: ${restIdxs.map(i => escapeHtml(getPlayerNameById(t.playerIds[i]))).join(', ')}</div>`;
+        }
+      }
 
       round.forEach((match, mIdx) => {
         const score1 = t.scores?.[`${rIdx}_${mIdx}_0`] || '';
@@ -5531,20 +5540,71 @@ function getCreatorName(user) {
 // TOURNAMENT CREATION
 // ============================================
 
+function tournamentTypeName(type) {
+  if (type === 'roundrobin') return 'Раунд-робин';
+  if (type === 'americanoflex') return 'Americano Flex';
+  return 'Американо';
+}
+
+function flexRoundsCount(n, k) {
+  const m = Math.min(k, Math.floor(n / 4));
+  if (m < 1 || n < 5) return 0;
+  return Math.ceil(n * (n - 1) / (4 * m));
+}
+
+function updateFlexRoundsHint() {
+  const hint = document.getElementById('flexRoundsHint');
+  if (!hint) return;
+  const type = document.getElementById('tournamentType').value;
+  if (type !== 'americanoflex') { hint.textContent = ''; return; }
+  const n = parseInt(document.getElementById('tournamentSize').value) || 8;
+  const k = parseInt(document.getElementById('tournamentCourts').value) || 1;
+  const r = flexRoundsCount(n, k);
+  const m = Math.min(k, Math.floor(n / 4));
+  const rest = n - 4 * m;
+  let txt = `Туров: ${r}`;
+  if (rest > 0) txt += ` · в туре отдыхают: ${rest}`;
+  else if (m < k) txt += ` · задействовано кортов: ${m}`;
+  hint.textContent = txt;
+}
+
+function onFlexCourtsChange() { updateFlexRoundsHint(); }
+
 function onTournamentTypeChange() {
   const type = document.getElementById('tournamentType').value;
-  const sizeGroup = document.getElementById('tournamentSize').closest('.form-group');
+  const sizeSelect = document.getElementById('tournamentSize');
+  const sizeGroup = sizeSelect.closest('.form-group');
   const rrSizeGroup = document.getElementById('rrSizeGroup');
-  const pointsGroup = document.getElementById('pointsGroup');
+  const flexCourtsGroup = document.getElementById('flexCourtsGroup');
 
   if (type === 'roundrobin') {
     sizeGroup.style.display = 'none';
     rrSizeGroup.style.display = 'block';
+    flexCourtsGroup.style.display = 'none';
+  } else if (type === 'americanoflex') {
+    sizeGroup.style.display = 'block';
+    rrSizeGroup.style.display = 'none';
+    flexCourtsGroup.style.display = 'block';
+    const prev = parseInt(sizeSelect.value);
+    sizeSelect.innerHTML = '';
+    for (let i = 5; i <= 12; i++) {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = i + ' участников';
+      sizeSelect.appendChild(o);
+    }
+    sizeSelect.value = (prev >= 5 && prev <= 12) ? String(prev) : '8';
   } else {
     sizeGroup.style.display = 'block';
     rrSizeGroup.style.display = 'none';
+    flexCourtsGroup.style.display = 'none';
+    sizeSelect.innerHTML = `
+      <option value="4">4 игрока (1 корт, 3 раунда)</option>
+      <option value="8" selected>8 игроков (2 корта, 7 раундов)</option>
+      <option value="12">12 игроков (3 корта, 11 раундов)</option>
+      <option value="16">16 игроков (4 корта, 15 раундов)</option>`;
   }
-  renderTournamentSlotInputs();
+  updateFlexRoundsHint();
 }
 
 function onScoringSystemChange() {
@@ -5764,11 +5824,12 @@ async function createTournament() {
   if (!location) { showToast("Выберите локацию", "error"); locks.createTournament = false; return; }
 
   // Collect slots from selects
-  let size, schedule, pairsData = null, points = 24;
+  let size, schedule = null, pairsData = null, points = 24, courts = null;
   let rrCfg = null;
-  if (type === 'americano') {
+  if (type === 'americano' || type === 'americanoflex') {
     size = parseInt(document.getElementById('tournamentSize').value);
     points = parseInt(document.getElementById('tournamentPoints').value);
+    if (type === 'americanoflex') courts = parseInt(document.getElementById('tournamentCourts').value) || 1;
   } else {
     rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
     const pairCount = rrCfg.pairs;
@@ -5778,43 +5839,10 @@ async function createTournament() {
     }
   }
 
-  const slots = [];
+  // Участники при создании не назначаются — записываются после создания,
+  // расписание строится при старте турнира по фактическому составу
+  const slots = Array.from({ length: size }, () => ({ playerId: null, playerName: null, bookedAt: null }));
   const playerIds = [];
-  for (let i = 0; i < size; i++) {
-    const select = document.getElementById(`tournamentSlot_${i}`);
-    const playerId = select ? select.value : '';
-    if (playerId) {
-      const player = players.find(p => p.id === playerId);
-      slots.push({ playerId, playerName: player ? player.name : '', bookedAt: new Date().toISOString() });
-      playerIds.push(playerId);
-    } else {
-      slots.push({ playerId: null, playerName: null, bookedAt: null });
-    }
-  }
-
-  if (type === 'americano') {
-    schedule = generateSchedule(playerIds.length);
-    if (!schedule) {
-      showToast("Ошибка генерации расписания", "error");
-      locks.createTournament = false;
-      return;
-    }
-  } else {
-    // Round Robin
-    if (!rrCfg) rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
-    const pairCount = rrCfg.pairs;
-    // Validate all pairs are formed only if all slots filled
-    const allFilled = slots.every(s => s.playerId);
-    if (allFilled) {
-      if (rrPairs.length !== pairCount || rrPairs.some(p => !p.playerIds[0] || !p.playerIds[1])) {
-        showToast("Сформируйте все пары перед созданием турнира", "error");
-        locks.createTournament = false;
-        return;
-      }
-      pairsData = rrPairs.map(p => ({ id: p.id, playerIds: p.playerIds, name: p.name }));
-      schedule = generateRoundRobinSchedule(pairsData, rrCfg.courts);
-    }
-  }
 
   const btn = document.getElementById('createTournamentBtn');
   btn.disabled = true;
@@ -5849,6 +5877,8 @@ async function createTournament() {
     }
     if (type === 'roundrobin' && rrCfg) {
       docData.courts = rrCfg.courts;
+    } else if (type === 'americanoflex') {
+      docData.courts = courts;
     }
 
     const docRef = await db.collection("padel_tournaments").add(docData);
@@ -5897,6 +5927,98 @@ function generateSchedule(numPlayers) {
 
   // Greedy generator for 12, 16
   return generateGreedySchedule(numPlayers);
+}
+
+// Americano Flex: N участников (5–12) на K кортах.
+// Каждый раунд играет M = min(K, floor(N/4)) матчей, отдыхает N - 4M игроков.
+// Цель: все сыграли в паре со всеми (партнёрские пары не повторяются).
+function generateFlexSchedule(n, k) {
+  const m = Math.min(k, Math.floor(n / 4));
+  if (n < 5 || m < 1) return null;
+  const rounds = Math.ceil(n * (n - 1) / (4 * m));
+  const needPartners = n * (n - 1) / 2;
+  const deadline = Date.now() + 1500; // бюджет времени: обычно укладываемся в ~100 мс
+  let best = null;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const res = flexScheduleAttempt(n, k, m, rounds);
+    if (!res) continue;
+    if (res.uniquePartners === needPartners) return res;
+    if (!best || res.uniquePartners > best.uniquePartners) best = res;
+    if (Date.now() > deadline) break;
+  }
+  return best;
+}
+
+function flexScheduleAttempt(n, k, m, rounds) {
+  const partnerUsed = new Set();
+  const oppCount = {};
+  const matchesPlayed = new Array(n).fill(0);
+  const restCount = new Array(n).fill(0);
+  const schedule = [], rests = [];
+  const key = (a, b) => a < b ? a + '_' + b : b + '_' + a;
+
+  for (let r = 0; r < rounds; r++) {
+    const needByes = n - 4 * m;
+    const byes = [];
+    const pool = [...Array(n).keys()];
+    while (byes.length < needByes) {
+      const minRest = Math.min(...pool.map(i => restCount[i]));
+      let cands = pool.filter(i => restCount[i] === minRest);
+      const minMatches = Math.min(...cands.map(i => matchesPlayed[i]));
+      cands = cands.filter(i => matchesPlayed[i] === minMatches);
+      const pick = cands[Math.floor(Math.random() * cands.length)];
+      byes.push(pick);
+      pool.splice(pool.indexOf(pick), 1);
+    }
+    const active = [...Array(n).keys()].filter(i => !byes.includes(i));
+    const round = [];
+    const usedInRound = new Set();
+
+    for (let mi = 0; mi < m; mi++) {
+      let bestMatch = null, bestScore = Infinity;
+      for (let att = 0; att < 600; att++) {
+        const avail = active.filter(i => !usedInRound.has(i));
+        if (avail.length < 4) break;
+        const cp = [...avail];
+        const four = [];
+        for (let x = 0; x < 4; x++) four.push(cp.splice(Math.floor(Math.random() * cp.length), 1)[0]);
+        const splits = [
+          [[four[0], four[1]], [four[2], four[3]]],
+          [[four[0], four[2]], [four[1], four[3]]],
+          [[four[0], four[3]], [four[1], four[2]]]
+        ];
+        for (const s2 of splits) {
+          const k1 = key(s2[0][0], s2[0][1]), k2 = key(s2[1][0], s2[1][1]);
+          // повтор партнёрской пары — большой штраф (fallback, если чистых вариантов нет)
+          let score = 0;
+          if (partnerUsed.has(k1)) score += 100;
+          if (partnerUsed.has(k2)) score += 200;
+          if (score >= 200) continue;
+          for (const a of s2[0]) for (const b of s2[1]) {
+            const c = oppCount[key(a, b)] || 0;
+            score += c === 0 ? 0 : c === 1 ? 2 : 25;
+          }
+          if (score < bestScore) { bestScore = score; bestMatch = { team1: s2[0], team2: s2[1] }; }
+        }
+        if (bestMatch && bestScore === 0) break;
+        if (bestMatch && bestScore < 2 && att > 250) break;
+      }
+      if (!bestMatch) return null;
+      round.push({ court: mi + 1, team1: bestMatch.team1, team2: bestMatch.team2 });
+      bestMatch.team1.concat(bestMatch.team2).forEach(i => usedInRound.add(i));
+      partnerUsed.add(key(bestMatch.team1[0], bestMatch.team1[1]));
+      partnerUsed.add(key(bestMatch.team2[0], bestMatch.team2[1]));
+      for (const a of bestMatch.team1) for (const b of bestMatch.team2) {
+        const kk = key(a, b);
+        oppCount[kk] = (oppCount[kk] || 0) + 1;
+      }
+    }
+    round.forEach(mt => { mt.team1.forEach(i => matchesPlayed[i]++); mt.team2.forEach(i => matchesPlayed[i]++); });
+    byes.forEach(i => restCount[i]++);
+    schedule.push(round);
+    rests.push(byes);
+  }
+  return { schedule, rests, uniquePartners: partnerUsed.size };
 }
 
 function generateRoundRobinSchedule(pairs, numCourts) {
@@ -6241,6 +6363,12 @@ function openScoreEditModal(tournamentId) {
   t.schedule.forEach((round, rIdx) => {
     html += `<div class="round-card" style="margin-bottom: 16px;">`;
     html += `<div class="round-header"><span class="round-num">Раунд ${rIdx + 1}</span></div>`;
+    {
+      const restIdxs = (t.scheduleRests || [])[rIdx] || [];
+      if (restIdxs.length) {
+        html += `<div style="padding: 0 12px 8px; font-size: 12px; color: var(--text-muted);">Отдыхают: ${restIdxs.map(i => escapeHtml(getPlayerNameById(t.playerIds[i]))).join(', ')}</div>`;
+      }
+    }
 
     round.forEach((match, mIdx) => {
       const score1 = t.scores?.[`${rIdx}_${mIdx}_0`] ?? '';
@@ -6447,10 +6575,17 @@ async function startTournament(tournamentId) {
 
   try {
     let schedule = null;
+    let scheduleRests = null;
     let pairsData = t.pairs || null;
 
     if (t.type === 'americano') {
       schedule = generateSchedule(slotPlayerIds.length);
+    } else if (t.type === 'americanoflex') {
+      const flex = generateFlexSchedule(slotPlayerIds.length, t.courts || 1);
+      if (flex) {
+        schedule = flex.schedule;
+        scheduleRests = flex.rests;
+      }
     } else if (t.type === 'roundrobin') {
       // Auto-form pairs if not set
       if (!pairsData || pairsData.length === 0) {
@@ -6478,6 +6613,7 @@ async function startTournament(tournamentId) {
       playerIds: slotPlayerIds,
       status: 'active'
     };
+    if (scheduleRests) updateData.scheduleRests = JSON.stringify(scheduleRests);
     if (pairsData) {
       updateData.pairs = pairsData;
     }
@@ -6588,8 +6724,8 @@ async function shareTournament(tournamentId) {
   const slots = t.slots || [];
   const bookedCount = slots.filter(s => s.playerId).length;
   const totalSlots = t.totalSlots || t.playerIds?.length || 0;
-  const typeText = t.type === 'roundrobin' ? 'Round Robin' : 'Americano';
-  const pointsText = t.type !== 'roundrobin' ? ` · ${t.pointsPerMatch || 24} очка` : '';
+  const typeText = tournamentTypeName(t.type);
+  const pointsText = t.type === 'roundrobin' ? '' : t.type === 'americanoflex' ? ` · ${t.totalSlots || '?'} уч. · ${t.courts || 1} корт.` : ` · ${t.pointsPerMatch || 24} очка`;
 
   const baseUrl = window.location.origin + window.location.pathname;
   const shareUrl = baseUrl + '?tournament=' + encodeURIComponent(tournamentId);
@@ -7315,17 +7451,22 @@ function openEditTournamentModal(tournamentId) {
   document.getElementById('addTournamentLocationWrap').style.display = 'none';
   document.getElementById('tournamentType').value = t.type || 'americano';
   document.getElementById('scoringSystem').value = t.scoringSystem || 'points';
+  onScoringSystemChange();
+  onTournamentTypeChange();
   if (t.type === 'roundrobin') {
     const pairs = t.pairs?.length || Math.max((t.totalSlots || 8) / 2, 4);
     const courts = t.courts || 1;
     const key = pairs + '_' + courts;
     document.getElementById('rrPairCount').value = ['4_1', '4_2', '8_2', '8_4'].includes(key) ? key : '4_1';
+  } else if (t.type === 'americanoflex') {
+    const size = String(t.totalSlots || 8);
+    document.getElementById('tournamentSize').value = ['5', '6', '7', '8', '9', '10', '11', '12'].includes(size) ? size : '8';
+    document.getElementById('tournamentCourts').value = String(t.courts || 1);
+    updateFlexRoundsHint();
   } else {
     const size = String(t.totalSlots || 8);
     document.getElementById('tournamentSize').value = ['4', '8', '12', '16'].includes(size) ? size : '8';
   }
-  onScoringSystemChange();
-  onTournamentTypeChange();
   document.getElementById('tournamentPoints').value = String(t.pointsPerMatch || 24);
   populateTournamentSelects();
   const locSelect = document.getElementById('tournamentLocation');
@@ -7334,16 +7475,7 @@ function openEditTournamentModal(tournamentId) {
   }
   locSelect.value = t.location || '';
 
-  // Участники: подставляем уже занятые слоты (заявки в очереди не трогаем — хранятся отдельно)
-  (t.slots || []).forEach((s, i) => {
-    const sel = document.getElementById(`tournamentSlot_${i}`);
-    if (sel && s.playerId) {
-      if (![...sel.options].some(o => o.value === s.playerId)) {
-        sel.add(new Option(s.playerName || 'Игрок', s.playerId));
-      }
-      sel.value = s.playerId;
-    }
-  });
+  // Участники при редактировании не показываются — записанные слоты сохраняются при сохранении
 
   const titleEl = document.querySelector('#createTournamentModal .modal-title');
   if (titleEl) titleEl.innerHTML = '<svg class="li"><use href="#i-pencil"/></svg> Редактировать турнир';
@@ -7371,10 +7503,11 @@ async function saveTournamentEdit() {
   if (!date) return fail('Выберите дату');
   if (!location) return fail('Выберите локацию');
 
-  let size, points = 24, rrCfg = null;
-  if (type === 'americano') {
+  let size, points = 24, rrCfg = null, courts = null;
+  if (type === 'americano' || type === 'americanoflex') {
     size = parseInt(document.getElementById('tournamentSize').value);
     points = parseInt(document.getElementById('tournamentPoints').value);
+    if (type === 'americanoflex') courts = parseInt(document.getElementById('tournamentCourts').value) || 1;
   } else {
     rrCfg = parseRrConfig(document.getElementById('rrPairCount').value);
     size = rrCfg.pairs * 2;
@@ -7383,33 +7516,21 @@ async function saveTournamentEdit() {
     }
   }
 
+  // Участники не редактируются: сохраняем уже записанных в первых слотах,
+  // остальные слоты — пустые (записанных нельзя потерять при смене размера)
   const oldFilled = (t.slots || []).filter(s => s.playerId);
   if (oldFilled.length > size) {
     return fail(`Нельзя уменьшить состав: уже записано ${oldFilled.length} участников`);
   }
-
-  const slots = [];
-  const playerIds = [];
-  for (let i = 0; i < size; i++) {
-    const select = document.getElementById(`tournamentSlot_${i}`);
-    const pid = select ? select.value : '';
-    if (pid) {
-      const prev = oldFilled.find(s => s.playerId === pid);
-      const player = players.find(p => p.id === pid);
-      slots.push({ playerId: pid, playerName: player ? player.name : (prev?.playerName || ''), bookedAt: prev ? prev.bookedAt : new Date().toISOString() });
-      playerIds.push(pid);
-    } else {
-      slots.push({ playerId: null, playerName: null, bookedAt: null });
-    }
-  }
-  if (new Set(playerIds).size !== playerIds.length) return fail('Один игрок выбран в нескольких слотах');
+  const slots = Array.from({ length: size }, (_, i) => oldFilled[i] || { playerId: null, playerName: null, bookedAt: null });
+  const playerIds = oldFilled.map(s => s.playerId);
 
   // Пары и расписание: Americano пересчитываем; RR — сохраняем пары только если состав не изменился
   let scheduleData = null, pairsData = null, courtsData = null;
-  if (type === 'americano') {
-    const schedule = generateSchedule(playerIds.length);
-    if (!schedule) return fail('Ошибка генерации расписания');
-    scheduleData = JSON.stringify(schedule);
+  if (type === 'americano' || type === 'americanoflex') {
+    // Расписание строится при старте турнира по фактическому составу
+    scheduleData = null;
+    if (type === 'americanoflex') courtsData = courts;
   } else {
     courtsData = rrCfg ? rrCfg.courts : (t.courts || 1);
     const oldKey = (t.playerIds || []).slice().sort().join('|');
@@ -7435,6 +7556,7 @@ async function saveTournamentEdit() {
     totalSlots: size,
     pointsPerMatch: points,
     scheduleData,
+    scheduleRests: null,
     scores: {},
     leaderboard: [],
     pairs: pairsData,
@@ -8533,7 +8655,8 @@ function openCreateTournamentModal() {
   document.getElementById('tournamentComment').value = '';
   document.getElementById('addTournamentLocationWrap').style.display = 'none';
   populateTournamentSelects();
-  renderTournamentSlotInputs();
+  document.getElementById('tournamentType').value = 'americano';
+  onTournamentTypeChange();
   // Reset RR pairs
   rrPairs = [];
   document.getElementById('rrPairFormation').style.display = 'none';
@@ -8570,26 +8693,6 @@ async function addTournamentLocation() {
   } catch (e) {
     showToast("Ошибка: " + e.message, "error");
   }
-}
-
-function renderTournamentSlotInputs() {
-  const container = document.getElementById('tournamentSlotInputs');
-  const type = document.getElementById('tournamentType').value;
-  let count = 8;
-  if (type === 'americano') {
-    count = parseInt(document.getElementById('tournamentSize').value) || 8;
-  } else {
-    count = (parseRrConfig(document.getElementById('rrPairCount').value).pairs || 4) * 2;
-  }
-  if (!container) return;
-  let html = '';
-  for (let i = 0; i < count; i++) {
-    html += `<select class="form-select" id="tournamentSlot_${i}">
-      <option value="">Слот ${i + 1} — свободен</option>
-      ${players.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '')).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-    </select>`;
-  }
-  container.innerHTML = html;
 }
 
 function openCreateGameModal() {
@@ -9809,7 +9912,7 @@ function startTournamentFromTraining(trainingId) {
     ? `${weekdaysShort[d.getDay()]} ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`
     : '';
   const typeVal = document.getElementById('tournamentType')?.value || 'americano';
-  const typeName = typeVal === 'roundrobin' ? 'Раунд-робин' : 'Американо';
+  const typeName = tournamentTypeName(typeVal);
   document.getElementById('tournamentName').value = dateShort ? `${typeName} • ${dateShort}` : typeName;
 
   // Реквизиты из карточки тренировки
@@ -9830,20 +9933,8 @@ function startTournamentFromTraining(trainingId) {
   const sizes = [4, 8, 12, 16];
   const size = sizes.find(s => s >= Math.max(participants.length, 1)) || 16;
   document.getElementById('tournamentSize').value = String(size);
-  renderTournamentSlotInputs();
 
-  // Список участников → слоты турнира
-  participants.forEach((s, i) => {
-    const sel = document.getElementById(`tournamentSlot_${i}`);
-    if (!sel) return;
-    // Игрок может отсутствовать в общем списке (например, старый id) — добавляем опцией
-    if (![...sel.options].some(o => o.value === s.playerId)) {
-      sel.add(new Option(s.playerName || 'Игрок', s.playerId));
-    }
-    sel.value = s.playerId;
-  });
-
-  showToast('Реквизиты и участники скопированы из тренировки', 'success');
+  showToast('Реквизиты скопированы из тренировки. Участники записываются после создания.', 'success');
 }
 
 // ===== Закрытая тренировка → запланированная игра: копируем реквизиты и участников =====
@@ -10730,6 +10821,7 @@ init();
         <label class="form-label">Тип турнира</label>
         <select class="form-select" id="tournamentType" onchange="onTournamentTypeChange()">
           <option value="americano" selected><svg class="li"><use href="#i-globe"/></svg> Americano (вращающиеся пары)</option>
+          <option value="americanoflex"><svg class="li"><use href="#i-globe"/></svg> Americano Flex (гибкое число участников)</option>
           <option value="roundrobin"><svg class="li"><use href="#i-refresh-cw"/></svg> Round Robin (фиксированные пары)</option>
         </select>
       </div>
@@ -10742,16 +10834,26 @@ init();
       </div>
       <div class="form-group">
         <label class="form-label">Количество участников</label>
-        <select class="form-select" id="tournamentSize" onchange="renderTournamentSlotInputs()">
+        <select class="form-select" id="tournamentSize">
           <option value="4">4 игрока (1 корт, 3 раунда)</option>
           <option value="8" selected>8 игроков (2 корта, 7 раундов)</option>
           <option value="12">12 игроков (3 корта, 11 раундов)</option>
           <option value="16">16 игроков (4 корта, 15 раундов)</option>
         </select>
       </div>
+      <div class="form-group" id="flexCourtsGroup" style="display:none;">
+        <label class="form-label">Количество кортов</label>
+        <select class="form-select" id="tournamentCourts" onchange="onFlexCourtsChange()">
+          <option value="1" selected>1 корт</option>
+          <option value="2">2 корта</option>
+          <option value="3">3 корта</option>
+          <option value="4">4 корта</option>
+        </select>
+        <div id="flexRoundsHint" style="font-size:12px;color:var(--text-muted);margin-top:4px;"></div>
+      </div>
       <div class="form-group" id="rrSizeGroup" style="display:none;">
         <label class="form-label">Количество пар (Round Robin)</label>
-        <select class="form-select" id="rrPairCount" onchange="renderTournamentSlotInputs()">
+        <select class="form-select" id="rrPairCount">
           <option value="4_1" selected>4 пары (8 игроков, 1 корт)</option>
           <option value="4_2">4 пары (8 игроков, 2 корта)</option>
           <option value="8_2">8 пар (16 игроков, 2 корта)</option>
@@ -10770,10 +10872,6 @@ init();
         </select>
       </div>
 
-      <div class="form-group">
-        <label class="form-label">Участники (опционально)</label>
-        <div id="tournamentSlotInputs"></div>
-      </div>
 
       <!-- Round Robin: Pair Formation -->
       <div id="rrPairFormation" style="display:none; margin-top: 16px; padding: 16px; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border);">
