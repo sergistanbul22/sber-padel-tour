@@ -1453,9 +1453,7 @@
       height: 56px;
     }
 
-    #profileHistoryRow { flex-direction: column; }
-    #profileHistoryTabs { position: static !important; flex: 0 0 auto !important; flex-direction: row !important; width: 100%; }
-    #profileHistoryTabs button { justify-content: center; }
+    #profileHistoryTabs, #profileHistoryTabs + div { max-width: 100%; }
 
     .score-grid {
       grid-template-columns: repeat(4, 1fr);
@@ -1924,17 +1922,15 @@
       <div id="h2hHomeContent" style="padding: 16px;"></div>
     </div>
 
-    <!-- 4. Участие в турнирах и играх (без заголовка): вкладки колонкой слева -->
+    <!-- 4. Участие в турнирах и играх (без заголовка): вкладки горизонтально, ширина как у таблицы выше -->
     <div style="margin: 24px 0 8px;">
-      <div id="profileHistoryRow" style="display:flex;gap:16px;align-items:flex-start;">
-        <div id="profileHistoryTabs" style="flex:0 0 170px;display:flex;flex-direction:column;gap:8px;position:sticky;top:14px;">
-          <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="width:100%;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><svg class="li"><use href="#i-trophy"/></svg> Турниры</button>
-          <button data-tab="games" onclick="setProfileHistoryTab('games')" style="width:100%;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:8px;"><svg class="li"><use href="#i-tennis"/></svg> Игры</button>
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div id="profileHistoryList"></div>
-          <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
-        </div>
+      <div id="profileHistoryTabs" style="display:flex;gap:8px;max-width:600px;margin:0 auto 14px;">
+        <button data-tab="tournaments" onclick="setProfileHistoryTab('tournaments')" style="flex:1;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:8px;"><svg class="li"><use href="#i-trophy"/></svg> Турниры</button>
+        <button data-tab="games" onclick="setProfileHistoryTab('games')" style="flex:1;padding:10px 12px;font-size:13px;font-family:inherit;border-radius:9px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:8px;"><svg class="li"><use href="#i-tennis"/></svg> Игры</button>
+      </div>
+      <div style="max-width:600px;margin:0 auto;">
+        <div id="profileHistoryList"></div>
+        <button id="profileHistoryMore" class="btn btn-secondary" style="width:100%;display:none;margin-top:4px;" onclick="profileShowMore()">Показать ещё</button>
       </div>
     </div>
   </div>
