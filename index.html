@@ -3974,7 +3974,7 @@ function profileGameCard(g) {
     <div class="card" style="padding:10px 12px;margin-bottom:10px;cursor:pointer;" onclick="openProfileGame('${g.id}')">
       <div style="display:flex;align-items:center;gap:8px;">
         <div class="match-avatars">${(d.pair1First || []).map(profileMiniAvatar).join('')}</div>
-        <div class="game-pair-names" style="color:var(--success);">${gamePairNamesWithDelta(g, d.pair1First)}</div>
+        <div class="game-pair-names">${gamePairNamesWithDelta(g, d.pair1First)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
         <div class="match-avatars">${(d.pair2First || []).map(profileMiniAvatar).join('')}</div>
@@ -7237,7 +7237,7 @@ function renderGames() {
           <div style="cursor: pointer;" onclick="openGame('${g.id}')">
             <div style="display:flex; align-items:center; gap:8px;">
               <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
-              <div class="game-pair-names" style="${isFinished ? 'color: var(--success);' : ''}">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
+              <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
             </div>
             <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
               <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
@@ -8767,6 +8767,22 @@ function hideGamePlayerDropdown(fieldId) {
   });
 })();
 
+// ФИО создателя игры: createdByName → users/{email} (lastName+firstName) → fallback
+async function resolveGameCreatorName(g) {
+  try {
+    const email = (g.createdBy || '').toLowerCase();
+    if (!email || (g.createdByName && !g.createdByName.includes('@'))) return;
+    const doc = await db.collection('users').doc(email).get();
+    if (!doc.exists) return;
+    const u = doc.data() || {};
+    const full = `${u.lastName || ''} ${u.firstName || ''}`.trim();
+    const name = full || u.login || '';
+    if (!name) return;
+    const el = document.getElementById('gameCreatorName');
+    if (el) el.textContent = name;
+  } catch (e) { /* нет доступа/офлайн — оставляем как есть */ }
+}
+
 function openGame(gameId) {
   gameScoreSelections = { score1: null, score2: null };
   currentGameIdForScore = null;
@@ -8783,13 +8799,10 @@ function openGame(gameId) {
   // Информация об игре
   html += `<div style="margin-bottom: 20px; color: var(--text-secondary); font-size: 14px;">
     <svg class="li"><use href="#i-calendar-days"/></svg> ${g.date ? new Date(g.date).toLocaleDateString('ru-RU') : '-'} ·
-    <svg class="li"><use href="#i-user"/></svg> Создал: ${escapeHtml((() => {
+    <svg class="li"><use href="#i-user"/></svg> Создал: <span id="gameCreatorName">${escapeHtml((() => {
       if (g.createdByName && !g.createdByName.includes("@")) return g.createdByName;
-      const creatorPlayer = players.find(p => p.email && p.email.toLowerCase() === (g.createdBy || '').toLowerCase());
-      if (creatorPlayer) return creatorPlayer.name;
-      if (g.createdBy === "6585875box@gmail.com") return "Устюгов Сергей";
-      return g.createdByName || g.createdBy || "Админ";
-    })())}
+      return g.createdBy || "Админ";
+    })())}</span>
   </div>`;
 
   // Счёт по сетам
@@ -8798,11 +8811,11 @@ function openGame(gameId) {
     const p1namesBr = displayOrder.pair1First?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
     const p2namesBr = displayOrder.pair2First?.map(pid => getPlayerNameById(pid)).join('<br>') || '?';
     html += `<div style="display:flex; align-items:center; gap: 16px;">
-      <div style="flex:1; text-align:right; font-size: 18px; color: var(--text-muted); line-height: 1.5;">${p1namesBr}</div>
+      <div style="flex:1; text-align:right; font-size: 18px; color: var(--text-primary); line-height: 1.5;">${p1namesBr}</div>
       <div style="display:flex; flex-direction:column; gap: 0px;">
         ${displayOrder.scores1First.map(s => `<div style="font-size: 28px; font-weight: 800; color: var(--accent); text-align:center;">${s.score1}:${s.score2}</div>`).join('')}
       </div>
-      <div style="flex:1; text-align:left; font-size: 18px; color: var(--text-muted); line-height: 1.5;">${p2namesBr}</div>
+      <div style="flex:1; text-align:left; font-size: 18px; color: var(--text-primary); line-height: 1.5;">${p2namesBr}</div>
     </div>`;
   }
 
@@ -8844,6 +8857,7 @@ function openGame(gameId) {
 
   document.getElementById('gameModalContent').innerHTML = html;
   document.getElementById('gameModal').classList.add('show');
+  resolveGameCreatorName(g);
 }
 
 function closeGameModal() {
