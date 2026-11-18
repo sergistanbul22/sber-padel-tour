@@ -10279,7 +10279,9 @@ function renderAvatarHtml(p) {
 function openAvatarViewer(playerId) {
   const p = players.find(x => x.id === playerId);
   if (!p || !p.avatar) return;
-  document.getElementById('avatarViewerImg').src = p.avatarFull || p.avatar;
+  const avi = document.getElementById('avatarViewerImg');
+  avi.style.width = ''; avi.style.height = '';
+  avi.src = p.avatarFull || p.avatar;
   document.getElementById('avatarViewerCaption').textContent = p.name || '';
   const v = document.getElementById('avatarViewer');
   v.style.display = 'flex';
@@ -10293,7 +10295,8 @@ function closeAvatarViewer() {
   document.removeEventListener('keydown', avatarViewerEsc);
   setTimeout(() => {
     v.style.display = 'none';
-    document.getElementById('avatarViewerImg').src = '';
+    const vi = document.getElementById('avatarViewerImg');
+    vi.src = ''; vi.style.width = ''; vi.style.height = '';
   }, 160);
 }
 
@@ -10305,7 +10308,22 @@ function avatarViewerEsc(e) {
 // передаём URL напрямую (для фото событий, где нет playerId).
 function openPhotoViewer(url, caption) {
   if (!url) return;
-  document.getElementById('avatarViewerImg').src = url;
+  const img = document.getElementById('avatarViewerImg');
+  img.style.width = ''; img.style.height = '';
+  // Тот же визуальный бокс, что и у аватарки: высота 86vh (ширина ≤ 92vw)
+  const sizeToBox = () => {
+    const ar = img.naturalWidth / img.naturalHeight;
+    if (!ar) return;
+    let h = Math.round(window.innerHeight * 0.86);
+    let w = Math.round(h * ar);
+    const maxW = Math.round(window.innerWidth * 0.92);
+    if (w > maxW) { w = maxW; h = Math.round(w / ar); }
+    img.style.width = w + 'px';
+    img.style.height = h + 'px';
+  };
+  img.onload = sizeToBox;
+  img.src = url;
+  if (img.complete && img.naturalWidth) sizeToBox();
   document.getElementById('avatarViewerCaption').textContent = caption || '';
   const v = document.getElementById('avatarViewer');
   v.style.display = 'flex';
