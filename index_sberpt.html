@@ -3865,17 +3865,14 @@ async function renderProfileStats(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
-    const rows = computePlayerH2H(pid, profStatsFilter, 'opponents');
+    const { rows, totals } = computePlayerH2H(pid, profStatsFilter, 'opponents');
     const filterBtn = (f, label) => `<button onclick="setProfileStatsFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${profStatsFilter === f ? 'var(--accent)' : 'transparent'};color:${profStatsFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${profStatsFilter === f ? '600' : '400'};">${label}</button>`;
     const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
     if (!rows.length) {
       content.innerHTML = filterTabs + '<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:13px;">Пока нет завершённых встреч</div>';
       return;
     }
-    const totalG = rows.reduce((a, r) => a + r.g, 0);
-    const totalW = rows.reduce((a, r) => a + r.w, 0);
-    const totalD = rows.reduce((a, r) => a + (r.d || 0), 0);
-    const totalL = rows.reduce((a, r) => a + r.l, 0);
+    const totalG = totals.g, totalW = totals.w, totalD = totals.d, totalL = totals.l;
     const pct = v => { const p = Math.round(v * 1000) / 10; return (Number.isInteger(p) ? String(p) : p.toFixed(1)) + '%'; };
     const statBox = (k, v, color) => `<div style="flex:1;min-width:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;">
       <div style="font-size:11px;color:var(--text-muted);">${k}</div>
@@ -5354,6 +5351,8 @@ async function ensureH2hGames() {
 function computePlayerH2H(pid, filter, mode) {
   mode = mode || 'opponents'; // opponents | partners — соперники или напарники по команде/паре
   const agg = {};
+  // Матчевый итог (без умножения на число оппонентов): один матч = одна игра
+  const tot = { g: 0, w: 0, d: 0, l: 0 };
   const add = (oppIds, res, pf, pa) => {
     (oppIds || []).forEach(oid => {
       if (!oid || oid === pid) return;
@@ -5382,7 +5381,9 @@ function computePlayerH2H(pid, filter, mode) {
         const oppTeam = in1 ? mt.team2 : mt.team1;
         // partners: в ту же строку идут партнёры по своей команде (кроме себя)
         const targetIds = mode === 'partners' ? (in1 ? mt.team1 : mt.team2).filter(i => i !== idx) : oppTeam;
-        add(targetIds.map(i => pids[i]), myS > oppS ? 'w' : myS < oppS ? 'l' : 'd', myS, oppS);
+        const res = myS > oppS ? 'w' : myS < oppS ? 'l' : 'd';
+        add(targetIds.map(i => pids[i]), res, myS, oppS);
+        tot.g++; if (res === 'w') tot.w++; else if (res === 'l') tot.l++; else tot.d++;
       });
     });
   });
@@ -5400,13 +5401,18 @@ function computePlayerH2H(pid, filter, mode) {
     const oppWon = oppSets.filter((v, i) => v > mySets[i]).length;
     // partners: в строку идёт партнёр по своей паре (кроме себя)
     const targetIds = mode === 'partners' ? (in1 ? g.pair1 : g.pair2).filter(x => x !== pid) : (in1 ? g.pair2 : g.pair1);
-    add(targetIds, myWon > oppWon ? 'w' : myWon < oppWon ? 'l' : 'd', pf, pa);
+    const res = myWon > oppWon ? 'w' : myWon < oppWon ? 'l' : 'd';
+    add(targetIds, res, pf, pa);
+    tot.g++; if (res === 'w') tot.w++; else if (res === 'l') tot.l++; else tot.d++;
   });
-  return Object.entries(agg).map(([oid, a]) => ({
-    oid, g: a.g, w: a.w, d: a.d, l: a.l,
-    winrate: a.g ? (a.w + 0.5 * (a.d || 0)) / a.g : 0, // ничья = 0,5 победы (как в шахматах)
-    pf: a.pf, pa: a.pa, diff: a.pf - a.pa
-  })).sort((a, b) => a.winrate - b.winrate || b.g - a.g || a.diff - b.diff);
+  return {
+    rows: Object.entries(agg).map(([oid, a]) => ({
+      oid, g: a.g, w: a.w, d: a.d, l: a.l,
+      winrate: a.g ? (a.w + 0.5 * (a.d || 0)) / a.g : 0, // ничья = 0,5 победы (как в шахматах)
+      pf: a.pf, pa: a.pa, diff: a.pf - a.pa
+    })).sort((a, b) => a.winrate - b.winrate || b.g - a.g || a.diff - b.diff),
+    totals: tot
+  };
 }
 
 let h2hHardestFirst = true;
@@ -5473,7 +5479,7 @@ async function renderHomeH2h(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
-    const rows = computePlayerH2H(pid, h2hFilter, h2hMode);
+    const { rows, totals } = computePlayerH2H(pid, h2hFilter, h2hMode);
     const isPartners = h2hMode === 'partners';
     const whoLabel = isPartners ? 'Напарник' : 'Соперник';
     const whoGen = isPartners ? 'Напарников' : 'Соперников';
@@ -5488,10 +5494,7 @@ async function renderHomeH2h(pid) {
       return;
     }
     const srcNote = h2hFilter === 'tournaments' ? 'Учитываются завершённые турниры (американо).' : h2hFilter === 'games' ? 'Учитываются отдельные завершённые игры.' : 'Учитываются завершённые турниры (американо) и отдельные игры.';
-    const totalG = rows.reduce((a, r) => a + r.g, 0);
-    const totalW = rows.reduce((a, r) => a + r.w, 0);
-    const totalD = rows.reduce((a, r) => a + (r.d || 0), 0);
-    const totalL = rows.reduce((a, r) => a + r.l, 0);
+    const totalG = totals.g, totalW = totals.w, totalD = totals.d, totalL = totals.l;
     const hardest = rows.find(r => r.g >= 2) || null;
     const displayRows = h2hHardestFirst ? rows : rows.slice().reverse();
     const eligible = displayRows.filter(r => r.g >= 2);
