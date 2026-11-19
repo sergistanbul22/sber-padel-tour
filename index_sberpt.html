@@ -4582,9 +4582,9 @@ function renderTournaments() {
 
     html += `
       <div class="card" style="position: relative;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <div style="cursor: pointer; flex: 1;" onclick="openTournament('${t.id}')">
-            <div style="margin-bottom: 4px; padding-right: 112px;">
+        <div style="display: flex; gap: 10px; align-items: stretch;">
+          <div style="cursor: pointer; flex: 1; min-width: 0;" onclick="openTournament('${t.id}')">
+            <div style="margin-bottom: 4px;">
               <span class="card-title tournament-card-title">${escapeHtml(t.name)}</span>
             </div>
             <div style="font-size: 13px; color: var(--text-muted);">
@@ -4592,16 +4592,18 @@ function renderTournaments() {
               ${t.createdByName ? `<br><span class="nowrap-param"><svg class="li"><use href="#i-user"/></svg> Организатор: ${escapeHtml(t.createdByName)}</span>` : ''}
             </div>
           </div>
-        </div>
-        <div style="position:absolute; top:12px; right:14px; display:flex; gap:8px; align-items:center;">
-            <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('tournament', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
-            ${canEdit(t) && t.status === 'upcoming' ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); openEditTournamentModal('${t.id}')" title="Редактировать"><svg class="li"><use href="#i-pencil"/></svg></span>` : ''}
-            ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+          <div style="display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 88px;">
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); shareCardLink('tournament', '${t.id}')" title="Поделиться ссылкой"><svg class="li"><use href="#i-refresh-cw"/></svg></span>
+              ${canEdit(t) && t.status === 'upcoming' ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); openEditTournamentModal('${t.id}')" title="Редактировать"><svg class="li"><use href="#i-pencil"/></svg></span>` : ''}
+              ${canEdit(t) ? `<span style="cursor:pointer; font-size:16px; padding:4px;" onclick="event.stopPropagation(); handleDeleteTournament(event, '${t.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+            </div>
+            <div style="flex: 1; display: flex; align-items: center;">
+              <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
           </div>
-        ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
-        <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
-          <span class="status-badge ${statusClass}">${statusText}</span>
         </div>
+        ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
       </div>
     `;
   });
@@ -7440,26 +7442,32 @@ function renderGames() {
 
       html += `
         <div class="card" style="padding: 10px 12px;">
-          <div style="cursor: pointer;" onclick="openGame('${g.id}')">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
-              <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
-            </div>
-            <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
-              <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
-              <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair2First)}</div>
-            </div>
-            <div class="game-card-footer" style="display:block; text-align:center; margin-top:8px; padding-top:7px;">
-              <div style="font-size:15px; font-weight:700; color:var(--accent); line-height:1.2;">${scoreDisplay || '–'}</div>
-              <div style="display:flex; align-items:center; justify-content:space-between; margin-top:3px; font-size:13px; color: var(--text-muted);">
-                <span><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
-                <span style="display:inline-flex; align-items:center; gap:8px;">
-                  <span class="status-badge ${statusClass}">${statusText}</span>
-                  ${canEdit(g) ? `<span style="cursor: pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
-                </span>
+          <div style="display:flex; gap:10px; align-items:stretch;">
+            <div style="flex:1; min-width:0;">
+              <div style="cursor: pointer;" onclick="openGame('${g.id}')">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <div class="match-avatars">${(displayOrder.pair1First || []).map(miniAvatar).join('')}</div>
+                  <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair1First)}</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                  <div class="match-avatars">${(displayOrder.pair2First || []).map(miniAvatar).join('')}</div>
+                  <div class="game-pair-names">${gamePairNamesWithDelta(g, displayOrder.pair2First)}</div>
+                </div>
+                <div class="game-card-footer" style="display:block; text-align:center; margin-top:8px; padding-top:7px;">
+                  <div style="font-size:15px; font-weight:700; color:var(--accent); line-height:1.2;">${scoreDisplay || '–'}</div>
+                  <div style="display:flex; align-items:center; justify-content:space-between; margin-top:3px; font-size:13px; color: var(--text-muted);">
+                    <span><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
+                    <span style="display:inline-flex; align-items:center; gap:8px;">
+                      ${canEdit(g) ? `<span style="cursor: pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
+                    </span>
+                  </div>
+                </div>
               </div>
+              ${isFinished && g.photo ? `<div style="margin-top: 8px;" onclick="openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
             </div>
-            ${isFinished && g.photo ? `<div style="margin-top: 8px;" onclick="event.stopPropagation(); openPhotoViewer('${g.photo}', 'Фото с матча')"><img src="${g.photoThumb || g.photo}" loading="lazy" alt="Фото с матча" style="width:100%; max-height:280px; object-fit:cover; border-radius:10px; display:block; cursor:zoom-in;"></div>` : ''}
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0; width:88px;">
+              <span class="status-badge ${statusClass}">${statusText}</span>
+            </div>
           </div>
         </div>
       `;
