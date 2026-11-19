@@ -3892,10 +3892,14 @@ async function renderProfileStats(pid) {
     content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Профиль игрока не привязан к аккаунту</div>';
     return;
   }
-  content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
+  subscribeH2hAgg(pid);
+  const cachedAgg0 = (h2hAggCache[pid] && h2hAggCache[pid].loaded) ? h2hAggCache[pid].doc : null;
+  if (!cachedAgg0) content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
-    await ensureH2hGames();
-    await ensureH2hAggDoc(pid);
+    // Быстрый путь: отдельные игры из агрегата padel_h2h (один маленький документ),
+    // не дожидаемся первого снапшота ВСЕХ завершённых игр. Fallback без документа — как раньше.
+    const aggDoc = cachedAgg0 || await ensureH2hAggDoc(pid);
+    if (!aggDoc && profStatsFilter !== 'tournaments') await ensureH2hGames();
     const { rows, totals } = computePlayerH2H(pid, profStatsFilter, 'opponents');
     const filterBtn = (f, label) => `<button onclick="setProfileStatsFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${profStatsFilter === f ? 'var(--accent)' : 'transparent'};color:${profStatsFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${profStatsFilter === f ? '600' : '400'};">${label}</button>`;
     const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
@@ -5571,11 +5575,12 @@ async function renderHomeH2h(pid) {
   if (!card || !content) return;
   if (!pid) { card.style.display = 'none'; return; }
   card.style.display = 'block';
-  content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
+  subscribeH2hAgg(pid);
+  const cachedAgg1 = (h2hAggCache[pid] && h2hAggCache[pid].loaded) ? h2hAggCache[pid].doc : null;
+  if (!cachedAgg1) content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
-    subscribeH2hAgg(pid);
-    await ensureH2hGames();
-    await ensureH2hAggDoc(pid);
+    const aggDoc = cachedAgg1 || await ensureH2hAggDoc(pid);
+    if (!aggDoc && profStatsFilter !== 'tournaments') await ensureH2hGames();
     const { rows } = computePlayerH2H(pid, profStatsFilter, h2hMode);
     const isPartners = h2hMode === 'partners';
     const whoLabel = isPartners ? 'Напарник' : 'Соперник';
