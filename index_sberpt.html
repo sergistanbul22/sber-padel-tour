@@ -1376,6 +1376,13 @@
     letter-spacing: 0.5px;
   }
 
+  /* Текст бейджа — uppercase: при метриках шрифта капс сидит ~2px выше
+     оптического центра пилюли — сдвигаем текст вниз (паддинги 10/10) */
+  .status-badge .sb-txt {
+    display: inline-block;
+    transform: translateY(2px);
+  }
+
   /* Параметр карточки — неразрывная фраза с иконкой: переносится целиком.
      Разделитель привязан к началу следующего параметра (::before), чтобы
      при переносе фразы точка не оставалась висеть в конце предыдущей строки */
@@ -4600,7 +4607,7 @@ function renderTournaments() {
           </div>
         ${t.status === 'finished' ? renderFinishedEventExtras(t) : ''}
         <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
-          <span class="status-badge ${statusClass}">${statusText}</span>
+          <span class="status-badge ${statusClass}"><span class="sb-txt">${statusText}</span></span>
         </div>
       </div>
     `;
@@ -7454,7 +7461,7 @@ function renderGames() {
               <div style="display:flex; align-items:center; justify-content:space-between; margin-top:3px; font-size:13px; color: var(--text-muted);">
                 <span><svg class="li"><use href="#i-tennis"/></svg> ${date}</span>
                 <span style="display:inline-flex; align-items:center; gap:8px;">
-                  <span class="status-badge ${statusClass}">${statusText}</span>
+                  <span class="status-badge ${statusClass}"><span class="sb-txt">${statusText}</span></span>
                   ${canEdit(g) ? `<span style="cursor: pointer; font-size:16px; padding:2px;" onclick="event.stopPropagation(); deleteGame('${g.id}')" title="Удалить"><svg class="li"><use href="#i-trash"/></svg></span>` : ''}
                 </span>
               </div>
