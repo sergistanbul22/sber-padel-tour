@@ -3840,6 +3840,7 @@ async function renderProfileStats(pid) {
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
     await ensureH2hGames();
+    await ensureH2hAggDoc(pid);
     const { rows, totals } = computePlayerH2H(pid, profStatsFilter, 'opponents');
     const filterBtn = (f, label) => `<button onclick="setProfileStatsFilter('${f}')" style="flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:7px;border:none;cursor:pointer;background:${profStatsFilter === f ? 'var(--accent)' : 'transparent'};color:${profStatsFilter === f ? '#fff' : 'var(--text-muted)'};font-weight:${profStatsFilter === f ? '600' : '400'};">${label}</button>`;
     const filterTabs = `<div style="display:flex;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:12px;">${filterBtn('all', 'Общая')}${filterBtn('tournaments', 'Турниры')}${filterBtn('games', 'Игры')}</div>`;
@@ -5336,6 +5337,36 @@ async function ensureH2hGames() {
   if (!h2hGamesReady) await h2hGamesReadyPromise;
 }
 
+// ---- Игровая часть H2H из padel_h2h (агрегаты пишут Cloud Functions) ----
+// Считается из одного документа вместо перебора всех игр: трафик главной
+// не зависит от размера базы. До миграции (документа нет) — fallback на h2hGamesAll.
+const h2hAggCache = {}; // pid -> { doc | loading, loaded }
+let h2hAggSubscribedPid = null;
+
+function subscribeH2hAgg(pid) {
+  if (!pid || h2hAggSubscribedPid === pid) return;
+  h2hAggSubscribedPid = pid;
+  db.collection('padel_h2h').doc(pid).onSnapshot(snap => {
+    h2hAggCache[pid] = { doc: snap.exists ? snap.data() : null, loaded: true };
+    // живая перерисовка главной при обновлении агрегатов (как subscribeToH2hGames)
+    if (h2hCurrentPid === pid && currentUser && document.getElementById('section-home')?.classList.contains('active')) {
+      renderHomeH2h(pid);
+    }
+  }, e => console.error('H2H agg subscription error:', e));
+}
+
+async function ensureH2hAggDoc(pid) {
+  if (!pid) return null;
+  const c = h2hAggCache[pid];
+  if (c && c.loaded) return c.doc;
+  if (c && c.loading) return c.loading;
+  const loading = db.collection('padel_h2h').doc(pid).get()
+    .then(snap => { h2hAggCache[pid] = { doc: snap.exists ? snap.data() : null, loaded: true }; return h2hAggCache[pid].doc; })
+    .catch(e => { console.error('H2H agg get error:', e); h2hAggCache[pid] = { doc: null, loaded: true }; return null; });
+  h2hAggCache[pid] = { loading };
+  return loading;
+}
+
 function computePlayerH2H(pid, filter, mode) {
   mode = mode || 'opponents'; // opponents | partners — соперники или напарники по команде/паре
   const agg = {};
@@ -5375,8 +5406,25 @@ function computePlayerH2H(pid, filter, mode) {
       });
     });
   });
-  // Отдельные завершённые игры
-  if (filter !== 'tournaments') (h2hGamesAll || []).forEach(g => {
+  // Отдельные завершённые игры: из агрегата padel_h2h (или fallback — перебор всех игр)
+  if (filter !== 'tournaments') {
+  const aggDoc = (h2hAggCache[pid] && h2hAggCache[pid].loaded) ? h2hAggCache[pid].doc : null;
+  if (aggDoc) {
+    const bucket = aggDoc[mode === 'partners' ? 'partners' : 'opponents'] || {};
+    for (const [oid, a] of Object.entries(bucket)) {
+      if (!oid || oid === pid) continue;
+      if (!agg[oid]) agg[oid] = { g: 0, w: 0, d: 0, l: 0, pf: 0, pa: 0 };
+      agg[oid].g += a.g || 0;
+      if (a.w) agg[oid].w += a.w;
+      if (a.l) agg[oid].l += a.l;
+      if (a.d) agg[oid].d += a.d;
+      agg[oid].pf += a.pf || 0;
+      agg[oid].pa += a.pa || 0;
+    }
+    const t = aggDoc.totals || {};
+    tot.g += t.g || 0; tot.w += t.w || 0; tot.d += t.d || 0; tot.l += t.l || 0;
+  } else {
+  (h2hGamesAll || []).forEach(g => {
     const in1 = (g.pair1 || []).includes(pid);
     const in2 = (g.pair2 || []).includes(pid);
     if (!in1 && !in2) return;
@@ -5393,6 +5441,8 @@ function computePlayerH2H(pid, filter, mode) {
     add(targetIds, res, pf, pa);
     tot.g++; if (res === 'w') tot.w++; else if (res === 'l') tot.l++; else tot.d++;
   });
+  }
+  }
   return {
     rows: Object.entries(agg).map(([oid, a]) => ({
       oid, g: a.g, w: a.w, d: a.d, l: a.l,
@@ -5460,7 +5510,9 @@ async function renderHomeH2h(pid) {
   card.style.display = 'block';
   content.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px;">Загрузка...</div>';
   try {
+    subscribeH2hAgg(pid);
     await ensureH2hGames();
+    await ensureH2hAggDoc(pid);
     const { rows } = computePlayerH2H(pid, profStatsFilter, h2hMode);
     const isPartners = h2hMode === 'partners';
     const whoLabel = isPartners ? 'Напарник' : 'Соперник';
