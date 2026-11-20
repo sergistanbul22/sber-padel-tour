@@ -2707,17 +2707,38 @@ async function callCloudFn(name, data) {
 // ============================================
 // INIT
 // ============================================
+// Диагностика очереди подписок на старте: включается флагом ?perf=1 в URL.
+// Логирует момент регистрации каждого listener'а (reg:*) и первый снапшот (snap:*).
+const PERF_ON = new URLSearchParams(location.search).has('perf');
+const _perfSeen = new Set();
+function perfMark(name) {
+  if (!PERF_ON || _perfSeen.has(name)) return;
+  _perfSeen.add(name);
+  console.log('[perf] ' + name + ' @ ' + Math.round(performance.now()) + 'ms');
+}
+
 function init() {
   try {
     app = firebase.initializeApp(FIREBASE_CONFIG);
     auth = firebase.auth();
     db = firebase.firestore();
 
+    // Офлайн-кеш Firestore: повторные входы получают первые снапшоты с диска
+    // мгновенно, сервер догоняет дельтой. Бесплатно: оплачиваются только
+    // серверные чтения — с кешем их меньше (резюм синхронизации, не полный набор).
+    // ВАЖНО: включать до любых других обращений к Firestore.
+    db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+      if (err.code === 'failed-precondition') console.log('Persistence off: несколько вкладок');
+      else if (err.code === 'unimplemented') console.log('Persistence off: браузер не поддерживает');
+      else console.log('Persistence off:', err.code || err.message);
+    });
+
     // Set auth persistence to LOCAL (remember session across reloads)
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
       .catch(err => console.error("Auth persistence error:", err));
 
     // Подписка на данные - работает для всех, даже без авторизации
+    perfMark('init:start');
     subscribeToPlayers();
     subscribeToTournaments();
     subscribeToGames();
@@ -2725,6 +2746,7 @@ function init() {
     subscribeToTrainings();
     subscribeToPlannedGames();
     subscribeToH2hGames();
+    perfMark('reg:all-listeners');
     // subscribeToTrainingMeta() moved to handleAuthStateChanged (requires auth)
 
     auth.onAuthStateChanged(handleAuthStateChanged);
@@ -2788,6 +2810,7 @@ function canEdit(item) {
 // ============================================
 
 function applyPlayersRows(rows) {
+  perfMark('snap:players (' + rows.length + ' docs)');
   players = rows.map(data => {
     if (data.eventsPlayed === undefined && data.tournamentsPlayed !== undefined) {
       data.eventsPlayed = data.tournamentsPlayed;
@@ -2804,6 +2827,7 @@ function applyPlayersRows(rows) {
   if (currentUser && document.getElementById('section-home')?.classList.contains('active')) renderHomeStats();
 }
 function applyTournamentsRows(rows) {
+  perfMark('snap:tournaments (' + rows.length + ' docs)');
   tournaments = rows.map(data => {
     if (data.scheduleData) {
       try { data.schedule = JSON.parse(data.scheduleData); } catch (e) { data.schedule = []; }
@@ -2834,6 +2858,7 @@ function applyTournamentsRows(rows) {
   if (currentUser && document.getElementById('section-home')?.classList.contains('active')) renderHomeStats();
 }
 function applyTrainingsRows(rows) {
+  perfMark('snap:trainings (' + rows.length + ' docs)');
   trainings = rows;
   renderTrainings();
   // Deep-link после загрузки тренировок (мобильные/Telegram-браузеры)
@@ -2862,6 +2887,7 @@ function subscribeToTournaments() {
 }
 
 function handleAuthStateChanged(user) {
+  perfMark('auth:callback (user=' + (user ? 'yes' : 'no') + ')');
   currentUser = user;
   currentLegacyEmail = null;
 
@@ -2890,6 +2916,7 @@ function handleAuthStateChanged(user) {
     subscribeToUserStatus(user);
     subscribeToTrainingMeta(); // Load training meta after auth is ready
     checkUserStatus().then(() => {
+      perfMark('auth:ready');
       authReady = true;
       updateUI();
       renderGames();
@@ -2989,7 +3016,9 @@ function subscribeToUserStatus(user) {
     // Continue to onSnapshot below for data caching
   }
 
+  perfMark('reg:user-doc');
   unsubscribeUserDoc = db.collection("users").doc(userEmail).onSnapshot(doc => {
+    perfMark('snap:user-doc');
     if (doc.exists) {
       const data = doc.data();
       currentUserData = data; // cache user data
@@ -5374,8 +5403,10 @@ let h2hGamesReadyResolve = null;
 const h2hGamesReadyPromise = new Promise(res => { h2hGamesReadyResolve = res; });
 
 function subscribeToH2hGames() {
+  perfMark('reg:h2h-games');
   db.collection('padel_games').where('status', '==', 'finished')
     .onSnapshot(snapshot => {
+      perfMark('snap:h2h-games (' + snapshot.docs.length + ' docs)');
       h2hGamesAll = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       h2hGamesReady = true;
       if (h2hGamesReadyResolve) { h2hGamesReadyResolve(); h2hGamesReadyResolve = null; }
@@ -7183,7 +7214,9 @@ function updateStats() {
 // Общий счётчик завершённых отдельных игр: живой слушатель одного документа.
 // Пишут только Cloud Functions (finalizeGame/deleteGame/recalculateAllResults).
 function subscribeToGameCounters() {
+  perfMark('reg:counters');
   db.collection("padel_counters").doc("games").onSnapshot(snap => {
+    perfMark('snap:counters');
     gamesFinishedStandalone = snap.exists ? (snap.data().finishedStandalone || 0) : 0;
     updateStats();
   }, err => {
@@ -7195,10 +7228,12 @@ function subscribeToGameCounters() {
 // GAMES
 // ============================================
 function subscribeToGames() {
+  perfMark('reg:games-page1');
   // Первая страница — живой снапшот (новые игры появляются сами).
   // Возвращает НЕ больше GAMES_PAGE_SIZE самых свежих игр.
   db.collection("padel_games").orderBy("createdAt", "desc").limit(GAMES_PAGE_SIZE)
     .onSnapshot(snapshot => {
+      perfMark('snap:games-page1 (' + snapshot.docs.length + ' docs)');
       const newest = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       // merge: заменяем первую страницу, старые догруженные страницы сохраняем
       const firstIds = new Set(newest.map(g => g.id));
@@ -7250,7 +7285,9 @@ function subscribeToTrainings() {
 }
 
 function subscribeToPlannedGames() {
+  perfMark('reg:planned-games');
   db.collection("padel_planned_games").onSnapshot(snapshot => {
+    perfMark('snap:planned-games (' + snapshot.docs.length + ' docs)');
     plannedGames = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     renderGames();
   }, err => {
@@ -7259,7 +7296,9 @@ function subscribeToPlannedGames() {
 }
 
 function subscribeToTrainingMeta() {
+  perfMark('reg:training-meta');
   db.collection("settings").doc("training_meta").onSnapshot(doc => {
+    perfMark('snap:training-meta');
     if (doc.exists) {
       const data = doc.data();
       trainingLocations = data.locations || [];
