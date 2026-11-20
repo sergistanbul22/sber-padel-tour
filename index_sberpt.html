@@ -2994,6 +2994,8 @@ function subscribeToUserStatus(user) {
       const data = doc.data();
       currentUserData = data; // cache user data
 
+      // Prefetch агрегата H2H своего игрока: к моменту открытия профиля кеш тёплый
+      if (data.playerId) { try { subscribeH2hAgg(data.playerId); } catch (e) {} }
       // Cache player name from padel_players if linked (сначала из локального кэша players)
       if (data.playerId) {
         const cached = players.find(p => p.id === data.playerId);
@@ -5399,11 +5401,32 @@ async function ensureH2hGames() {
 const h2hAggCache = {}; // pid -> { doc | loading, loaded }
 let h2hAggSubscribedPid = null;
 
+// Кеш агрегата переживает перезагрузку страницы: при входе блоки профиля
+// рисуются мгновенно из last-known данных, листener тут же подтянет свежие.
+function h2hAggStorageKey(pid) { return 'sberpt_h2hagg_' + pid; }
+function readH2hAggStorage(pid) {
+  try {
+    const raw = localStorage.getItem(h2hAggStorageKey(pid));
+    if (!raw) return null;
+    return { doc: JSON.parse(raw), loaded: true };
+  } catch (e) { return null; }
+}
+function writeH2hAggStorage(pid, doc) {
+  try { if (doc) localStorage.setItem(h2hAggStorageKey(pid), JSON.stringify(doc)); } catch (e) {}
+}
+
 function subscribeH2hAgg(pid) {
-  if (!pid || h2hAggSubscribedPid === pid) return;
+  if (!pid) return;
+  // Подмешиваем сохранённый с прошлого захода агрегат — до первого снапшота
+  if (!h2hAggCache[pid] || !h2hAggCache[pid].loaded) {
+    const stored = readH2hAggStorage(pid);
+    if (stored) h2hAggCache[pid] = stored;
+  }
+  if (h2hAggSubscribedPid === pid) return;
   h2hAggSubscribedPid = pid;
   db.collection('padel_h2h').doc(pid).onSnapshot(snap => {
     h2hAggCache[pid] = { doc: snap.exists ? snap.data() : null, loaded: true };
+    writeH2hAggStorage(pid, h2hAggCache[pid].doc);
     // живая перерисовка главной при обновлении агрегатов (как subscribeToH2hGames)
     if (h2hCurrentPid === pid && currentUser && document.getElementById('section-home')?.classList.contains('active')) {
       renderHomeH2h(pid);
@@ -5417,7 +5440,7 @@ async function ensureH2hAggDoc(pid) {
   if (c && c.loaded) return c.doc;
   if (c && c.loading) return c.loading;
   const loading = db.collection('padel_h2h').doc(pid).get()
-    .then(snap => { h2hAggCache[pid] = { doc: snap.exists ? snap.data() : null, loaded: true }; return h2hAggCache[pid].doc; })
+    .then(snap => { h2hAggCache[pid] = { doc: snap.exists ? snap.data() : null, loaded: true }; writeH2hAggStorage(pid, h2hAggCache[pid].doc); return h2hAggCache[pid].doc; })
     .catch(e => { console.error('H2H agg get error:', e); h2hAggCache[pid] = { doc: null, loaded: true }; return null; });
   h2hAggCache[pid] = { loading };
   return loading;
